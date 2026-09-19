@@ -1,12 +1,12 @@
-/* Video Brief Builder V1.9 - browser-only prototype */
+/* Video Brief Builder V2.0 - browser-only prototype */
 (() => {
   'use strict';
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const STORAGE_KEY = 'videoBriefBuilderV19Project';
-  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV18Project','videoBriefBuilderV17Project','videoBriefBuilderV16Project','videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
-  const PRESET_KEY = 'videoBriefBuilderV19Presets';
+  const STORAGE_KEY = 'videoBriefBuilderV20Project';
+  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV19Project','videoBriefBuilderV18Project','videoBriefBuilderV17Project','videoBriefBuilderV16Project','videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
+  const PRESET_KEY = 'videoBriefBuilderV20Presets';
 
   const STATUS_META = {
     unchanged: { label: '未變更', cls: 'status-unchanged' },
@@ -187,19 +187,17 @@
     state.density = els.densitySelect.value;
     state.autoRequirements = els.autoReq.checked;
     if (!state.oldRaw) return alert('請先匯入影音夥伴提供的字幕 A，作為文字校正基準。');
-    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.9 會先用 A 校正 B 的文字，並用 B 全文檢查避免把分段差異誤判成移除。');
+    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V2.0 會先移除時間軸、用純文本比對 A/B，再回填 A 時間碼。');
 
     const oldCues = parseSubtitle(state.oldRaw);
     const newCues = parseSubtitle(state.newRaw);
     if (!oldCues.length) return alert('字幕 A 沒有讀到時間碼。請確認格式是否包含起訖時間。');
     if (!newCues.length) return alert('字幕 B 沒有讀到時間碼。請確認格式是否包含起訖時間。');
 
-    // V1.9: 先建立 B 的順序區塊，再在「進入人工分段前」用 A 校正文案；若 B 只保留部分內容，會用 A 校正後的保留文字顯示。
-    // compareText 永遠保留 B 的原始轉錄，之後仍可拿來做差異判斷。
-    const rawReviewBlocks = mergeCues(newCues, state.mergeMode).map((b,i)=>({
-      ...b, reviewIndex:i, forceBreak:false, compareText:b.text, textSource:'B', timeSource:'B', correctedFromA:false
-    }));
-    state.canonicalBlocks = seedReviewTextFromA(rawReviewBlocks, oldCues, {aggressive:true});
+    // V2.0 Text-first / Time-later:
+    // 先把 A/B 都視為純文本流比對，不用原始 cue 分段判斷移除。
+    // Step 3 顯示的是「用 A 校正後、符合 B 剪輯結果」的文字；確認後才回填 A 時間碼產出需求。
+    state.canonicalBlocks = buildTextFirstReviewBlocks(oldCues, newCues, state.mergeMode);
     state.blocks = [];
     segmentationHistory = [];
     state.stage = 'review';
@@ -213,7 +211,7 @@
     if (!state.canonicalBlocks?.length) return alert('請先整理重剪版字幕 B。');
     const oldCues = parseSubtitle(state.oldRaw || '');
     if (!oldCues.length) return alert('字幕 A 無法讀取，請重新匯入後再比對。');
-    state.blocks = compareReviewedBToA(state.canonicalBlocks, oldCues, state.autoRequirements);
+    state.blocks = compareReviewedTextFirst(state.canonicalBlocks, oldCues, state.autoRequirements);
     state.blocks = sortBlocksChronologically(state.blocks);
     state.stage = 'edit';
     saveProject();
@@ -480,6 +478,376 @@
     return a + (needsSpace ? ' ' : '') + b;
   }
 
+
+
+  // ==============================
+  // V2.0 Text-first / Time-later core
+  // ==============================
+
+  function buildTextFirstReviewBlocks(oldCues, newCues, mode='standard') {
+    const aFlow = buildCueTextFlow(oldCues, mode);
+    const bBlocks = mergeCues(newCues, mode).map((b,i)=>({
+      ...b,
+      reviewIndex:i,
+      forceBreak:false,
+      compareText:b.text,
+      textSource:'B',
+      timeSource:'B',
+      correctedFromA:false,
+      aText:'',
+      removedParts:[],
+      removedRanges:[],
+      boundaryParts:[],
+      boundaryRanges:[]
+    }));
+    const textContext = { fullBText: newCues.map(c=>c.text).join(''), reviewText: bBlocks.map(b=>b.text).join('') };
+    return bBlocks.map((b, bi) => {
+      const m = findBestRangeInAFlow(aFlow, b.compareText || b.text, {preferExpanded:true});
+      const out = {...b, aPreview:'', aMatchScore:m?.score || 0};
+      if (!m || m.score < .46) return out;
+      const analysis = analyzeAtoBText(m.aText, out.compareText || out.text, textContext);
+      const shouldApply = analysis.safeToApply || analysis.isPartial || analysis.hasBoundaryDiff || m.score >= .54;
+      if (shouldApply) {
+        out.text = analysis.displayText || m.displayText || m.aText;
+        out.aText = m.aText;
+        out.correctedFromA = true;
+        out.textSource = 'A';
+        out.aPreview = '';
+        out.aNormStart = m.aNormStart;
+        out.aNormEnd = m.aNormEnd;
+        out.aGroupStart = m.aGroupStart;
+        out.aGroupEnd = m.aGroupEnd;
+        out.oldStartRaw = m.oldStartRaw;
+        out.oldEndRaw = m.oldEndRaw;
+        out.partialRemoved = !!analysis.isPartial;
+        out.removedParts = analysis.removedParts || [];
+        out.removedRanges = analysis.removedRanges || [];
+        out.boundaryParts = analysis.boundaryParts || [];
+        out.boundaryRanges = analysis.boundaryRanges || [];
+        out.partialConfidence = analysis.confidence || 0;
+      } else {
+        out.aPreview = m.aText;
+        out.aNormStart = m.aNormStart;
+        out.aNormEnd = m.aNormEnd;
+        out.aGroupStart = m.aGroupStart;
+        out.aGroupEnd = m.aGroupEnd;
+        out.oldStartRaw = m.oldStartRaw;
+        out.oldEndRaw = m.oldEndRaw;
+      }
+      return out;
+    });
+  }
+
+  function buildCueTextFlow(cues, mode='standard') {
+    const cueIndexById = new Map((cues || []).map((c, i) => [c.id, i]));
+    const groups = mergeCues(cues || [], mode).map((g, gi) => ({
+      ...g,
+      groupIndex: gi,
+      cueIndexes: (g.sourceCueIds || []).map(id => cueIndexById.get(id)).filter(i => Number.isFinite(i))
+    }));
+    let raw = '';
+    const rawMeta = [];
+    function addRaw(str, groupIndex) {
+      for (let i=0; i<str.length; i++) {
+        rawMeta[raw.length] = {groupIndex};
+        raw += str[i];
+      }
+    }
+    groups.forEach((g, gi) => {
+      if (raw) {
+        const sep = needsJoinSpace(raw.slice(-1), (g.text || '').slice(0,1)) ? ' ' : '';
+        if (sep) addRaw(sep, gi);
+      }
+      addRaw(g.text || '', gi);
+    });
+    const normChars = [];
+    let pos = 0;
+    for (const ch of raw) {
+      const start = pos;
+      pos += ch.length;
+      const n = normalizeOne(ch);
+      if (n) normChars.push({ch:n, start, end:pos, groupIndex:rawMeta[start]?.groupIndex ?? null});
+    }
+    return {cues, groups, raw, rawMeta, normChars, norm:normChars.map(x=>x.ch).join('')};
+  }
+
+  function normalizeOne(ch) {
+    return String(ch || '').toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+  }
+
+  function needsJoinSpace(aLast, bFirst) {
+    return /[A-Za-z0-9]$/.test(aLast || '') && /^[A-Za-z0-9]/.test(bFirst || '');
+  }
+
+  function findBestRangeInAFlow(aFlow, bText, options={}) {
+    const bArr = normalizedCharMap(bText || '');
+    const bNorm = bArr.map(x=>x.ch).join('');
+    if (!bNorm || !aFlow?.norm) return null;
+    const aNorm = aFlow.norm;
+    let best = null;
+
+    let idx = aNorm.indexOf(bNorm);
+    while (idx >= 0) {
+      const c = candidateFromNormRange(aFlow, idx, idx + bNorm.length, bNorm, 1, options);
+      if (!best || c.score > best.score || (c.score === best.score && c.aNormEnd-c.aNormStart < best.aNormEnd-best.aNormStart)) best = c;
+      idx = aNorm.indexOf(bNorm, idx + 1);
+    }
+    if (best && best.score >= .98) return best;
+
+    const bLen = bNorm.length;
+    const windows = [...new Set([
+      Math.max(2, Math.round(bLen * .72)),
+      Math.max(2, bLen - 6),
+      bLen,
+      bLen + 6,
+      bLen + 16,
+      Math.round(bLen * 1.35),
+      Math.round(bLen * 1.65)
+    ].map(x => Math.max(2, Math.min(aNorm.length, x))))].sort((a,b)=>a-b);
+
+    // Prefer starts near characters that appear in the B text. This keeps long transcripts responsive.
+    const bChars = new Set(bNorm.slice(0, Math.min(6, bNorm.length)).split(''));
+    const starts = [];
+    for (let i=0; i<aNorm.length; i++) {
+      if (bChars.has(aNorm[i]) || i % 3 === 0) starts.push(i);
+    }
+    for (const start of starts) {
+      for (const w of windows) {
+        if (start + w > aNorm.length) continue;
+        const seg = aNorm.slice(start, start + w);
+        const score = textSimilarityNorm(seg, bNorm);
+        if (score < .42) continue;
+        const c = candidateFromNormRange(aFlow, start, start + w, bNorm, score, options);
+        if (!best || c.score > best.score || (Math.abs(c.score-best.score)<.001 && Math.abs((c.aNormEnd-c.aNormStart)-bLen) < Math.abs((best.aNormEnd-best.aNormStart)-bLen))) best = c;
+      }
+    }
+    return best && best.score >= .44 ? best : null;
+  }
+
+  function candidateFromNormRange(aFlow, start, end, bNorm, score, options={}) {
+    let s = Math.max(0, start), e = Math.min(aFlow.normChars.length, end);
+    const rawSliceText = textFromNormRange(aFlow, s, e);
+    let aNormStart = s, aNormEnd = e;
+    let aGroupStart = groupAtNormIndex(aFlow, s), aGroupEnd = groupAtNormIndex(aFlow, Math.max(s, e-1));
+    if (options.preferExpanded !== false) {
+      const expanded = expandNormRangeToGroup(aFlow, s, e, bNorm.length);
+      if (expanded) {
+        aNormStart = expanded.start;
+        aNormEnd = expanded.end;
+        aGroupStart = expanded.groupStart;
+        aGroupEnd = expanded.groupEnd;
+      }
+    }
+    const aText = textFromNormRange(aFlow, aNormStart, aNormEnd);
+    const displayText = rawSliceText || aText;
+    const g0 = aFlow.groups[aGroupStart] || null;
+    const g1 = aFlow.groups[aGroupEnd] || g0;
+    return {
+      aNormStart, aNormEnd, aGroupStart, aGroupEnd,
+      score, coverage: Math.min(bNorm.length, Math.max(1, aNormEnd-aNormStart)) / Math.max(1, Math.max(bNorm.length, aNormEnd-aNormStart)),
+      aText,
+      displayText,
+      oldStartRaw: g0?.startRaw || '',
+      oldEndRaw: g1?.endRaw || ''
+    };
+  }
+
+  function groupAtNormIndex(aFlow, idx) {
+    const ch = aFlow.normChars[Math.max(0, Math.min(aFlow.normChars.length-1, idx))];
+    return Number.isFinite(ch?.groupIndex) ? ch.groupIndex : 0;
+  }
+
+  function expandNormRangeToGroup(aFlow, start, end, bLen) {
+    if (!aFlow.normChars.length) return null;
+    const gStart = groupAtNormIndex(aFlow, start);
+    const gEnd = groupAtNormIndex(aFlow, Math.max(start, end-1));
+    if (!Number.isFinite(gStart) || !Number.isFinite(gEnd)) return null;
+    const first = firstNormIndexForGroup(aFlow, gStart);
+    const last = lastNormIndexForGroup(aFlow, gEnd) + 1;
+    const expandedLen = Math.max(1, last - first);
+    // Expand to the containing A phrase only when it is still a plausible same sentence.
+    // This is what lets us detect 「水蜜桃」 as a partial deletion instead of a whole removed segment.
+    const maxExpanded = Math.max(bLen + 34, Math.ceil(bLen * 2.05));
+    if (expandedLen <= maxExpanded) return {start:first, end:last, groupStart:gStart, groupEnd:gEnd};
+    return {start, end, groupStart:gStart, groupEnd:gEnd};
+  }
+
+  function firstNormIndexForGroup(aFlow, groupIndex) {
+    const i = aFlow.normChars.findIndex(x => x.groupIndex === groupIndex);
+    return i >= 0 ? i : 0;
+  }
+
+  function lastNormIndexForGroup(aFlow, groupIndex) {
+    for (let i=aFlow.normChars.length-1; i>=0; i--) if (aFlow.normChars[i].groupIndex === groupIndex) return i;
+    return Math.max(0, aFlow.normChars.length-1);
+  }
+
+  function textFromNormRange(aFlow, start, end) {
+    if (!aFlow?.normChars?.length || start >= end) return '';
+    const s = Math.max(0, Math.min(aFlow.normChars.length-1, start));
+    const e = Math.max(s, Math.min(aFlow.normChars.length, end));
+    const rawStart = aFlow.normChars[s]?.start ?? 0;
+    const rawEnd = aFlow.normChars[e-1]?.end ?? rawStart;
+    return String(aFlow.raw || '').slice(rawStart, rawEnd).trim();
+  }
+
+  function rangeInfoFromAFlow(aFlow, start, end) {
+    const gStart = groupAtNormIndex(aFlow, start);
+    const gEnd = groupAtNormIndex(aFlow, Math.max(start, end-1));
+    const g0 = aFlow.groups[gStart] || null;
+    const g1 = aFlow.groups[gEnd] || g0;
+    return {
+      text: textFromNormRange(aFlow, start, end),
+      oldStartRaw: g0?.startRaw || '',
+      oldEndRaw: g1?.endRaw || '',
+      groupStart:gStart,
+      groupEnd:gEnd
+    };
+  }
+
+  function textSimilarityNorm(x, y) {
+    if (!x || !y) return 0;
+    if (x === y) return 1;
+    const lev = 1 - levenshtein(x,y) / Math.max(x.length,y.length);
+    const dice = diceCoefficient(x,y);
+    return .66 * lev + .34 * dice;
+  }
+
+  function compareReviewedTextFirst(reviewBlocks, oldCues, autoReq=true) {
+    const aFlow = buildCueTextFlow(oldCues, state.mergeMode || 'standard');
+    const context = { fullBText: (reviewBlocks || []).map(b => b.text || b.compareText || '').join('') };
+    const matched = [];
+    const output = [];
+
+    (reviewBlocks || []).forEach((bb, bi) => {
+      const probe = bb.text || bb.compareText || '';
+      const m = findBestRangeInAFlow(aFlow, probe, {preferExpanded:true});
+      if (!m || m.score < .44) {
+        output.push(makeEditorBlock({
+          ...bb,
+          text:bb.text,
+          compareText:bb.compareText || bb.text,
+          newIndex:bi,
+          oldIndex:null,
+          status:'added',
+          similarity:0,
+          textSource:'B',
+          timeSource:'B',
+          forceBreak:!!bb.forceBreak
+        }, autoReq));
+        return;
+      }
+      const analysis = analyzeAtoBText(m.aText, probe, context);
+      const blockMatch = {bi, ...m, analysis};
+      matched.push(blockMatch);
+      const textForBlock = (analysis.isPartial || analysis.hasBoundaryDiff) ? (analysis.displayText || probe) : (m.aText || probe);
+      output.push(makeEditorBlock({
+        ...bb,
+        text:textForBlock,
+        aText:m.aText,
+        compareText:bb.compareText || bb.text,
+        removedParts:analysis.removedParts || [],
+        removedRanges:analysis.removedRanges || [],
+        boundaryParts:analysis.boundaryParts || [],
+        boundaryRanges:analysis.boundaryRanges || [],
+        partialConfidence:analysis.confidence || 0,
+        oldStartRaw:m.oldStartRaw,
+        oldEndRaw:m.oldEndRaw,
+        newIndex:bi,
+        oldIndex:m.aGroupStart,
+        status:'unchanged',
+        similarity:m.score,
+        textSource:'A',
+        timeSource:'B',
+        forceBreak:!!bb.forceBreak,
+        aNormStart:m.aNormStart,
+        aNormEnd:m.aNormEnd,
+        aGroupStart:m.aGroupStart,
+        aGroupEnd:m.aGroupEnd
+      }, autoReq));
+    });
+
+    // Detect moved order by A text position in final B order. Duplicates from subtitle splits are treated as stable.
+    const seq = matched.map((m, i) => m.aNormStart + i * 0.000001);
+    const lis = new Set(longestIncreasingSubsequenceIndices(seq));
+    matched.forEach((m, pos) => {
+      const outBlock = output.find(b => b.newIndex === m.bi && b.type !== 'manual');
+      if (!outBlock) return;
+      const moved = !lis.has(pos);
+      const partial = !!m.analysis.isPartial;
+      const split = !!m.analysis.hasBoundaryDiff && !partial;
+      outBlock.status = partial ? (moved ? 'moved_partial_removed' : 'partial_removed') : moved ? 'moved' : split ? 'split_difference' : (m.score < .56 ? 'uncertain' : 'unchanged');
+      outBlock.requirements = autoReq ? autoRequirementsFor(outBlock) : outBlock.requirements;
+    });
+
+    // Any A text range not covered by a matched expanded A range is a real removal candidate.
+    const coverage = matched.filter(m => m.score >= .44).map(m => ({start:m.aNormStart, end:m.aNormEnd}));
+    const removedRanges = complementNormRanges(aFlow.normChars.length, coverage)
+      .map(r => trimRemovedNormRange(aFlow, r))
+      .filter(r => r && r.end > r.start && (r.end-r.start) >= 3);
+
+    removedRanges.forEach((r, idx) => {
+      const info = rangeInfoFromAFlow(aFlow, r.start, r.end);
+      if (!norm(info.text) || norm(info.text).length < 3) return;
+      const prev = matched.filter(m => m.aNormEnd <= r.start).sort((a,b)=>b.aNormEnd-a.aNormEnd)[0];
+      const next = matched.filter(m => m.aNormStart >= r.end).sort((a,b)=>a.aNormStart-b.aNormStart)[0];
+      let anchorTime = Number.MAX_SAFE_INTEGER / 1000;
+      if (prev) anchorTime = timeToSeconds(reviewBlocks[prev.bi]?.endRaw || reviewBlocks[prev.bi]?.startRaw || '') + .0002 + idx*.00001;
+      else if (next) anchorTime = Math.max(0, timeToSeconds(reviewBlocks[next.bi]?.startRaw || '') - .0002 - idx*.00001);
+      output.push(makeEditorBlock({
+        text:info.text,
+        compareText:'',
+        newIndex:null,
+        oldIndex:info.groupStart,
+        status:'removed',
+        similarity:0,
+        startRaw:info.oldStartRaw,
+        endRaw:info.oldEndRaw,
+        oldStartRaw:info.oldStartRaw,
+        oldEndRaw:info.oldEndRaw,
+        textSource:'A',
+        timeSource:'A',
+        anchorTime
+      }, autoReq));
+    });
+
+    const ordered = sortBlocksChronologically(output);
+    let newRank = 0;
+    ordered.forEach(b => {
+      if (b.timeSource === 'B' && b.type !== 'manual') b.newIndex = newRank++;
+      if (b.status === 'moved' || b.status === 'moved_partial_removed') {
+        const autoMove = b.requirements.find(r => r.auto && r.text.startsWith('順序調換｜'));
+        if (autoMove) autoMove.text = movedRequirementText(b);
+      }
+    });
+    return ordered;
+  }
+
+  function complementNormRanges(total, ranges) {
+    const merged = [];
+    [...ranges].sort((a,b)=>a.start-b.start).forEach(r => {
+      const start = Math.max(0, Math.min(total, r.start));
+      const end = Math.max(start, Math.min(total, r.end));
+      if (end <= start) return;
+      const last = merged[merged.length-1];
+      if (last && start <= last.end) last.end = Math.max(last.end, end);
+      else merged.push({start,end});
+    });
+    const out = [];
+    let pos = 0;
+    merged.forEach(r => { if (r.start > pos) out.push({start:pos, end:r.start}); pos = Math.max(pos, r.end); });
+    if (pos < total) out.push({start:pos, end:total});
+    return out;
+  }
+
+  function trimRemovedNormRange(aFlow, range) {
+    if (!range) return null;
+    let s = range.start, e = range.end;
+    while (s < e && !norm(textFromNormRange(aFlow, s, s+1))) s++;
+    while (e > s && !norm(textFromNormRange(aFlow, e-1, e))) e--;
+    return e > s ? {start:s,end:e} : null;
+  }
+
   function seedReviewTextFromA(reviewBlocks, oldCues, options={}) {
     const aggressive = options.aggressive !== false;
     const bContext = buildBTextContext(reviewBlocks);
@@ -613,7 +981,18 @@
     if (!p || p.length < 2) return false;
     const full = norm(context.fullBText || '');
     if (!full) return false;
-    return full.includes(p);
+    if (full.includes(p)) return true;
+    // B 可能有轉錄錯字；缺字片段若在 B 全文中有高相似片段，也視為仍存在，避免誤標成移除。
+    if (p.length < 4) return false;
+    const lens = [...new Set([p.length-2, p.length-1, p.length, p.length+1, p.length+2].filter(x => x >= 2))];
+    for (let i=0; i<full.length; i++) {
+      for (const len of lens) {
+        if (i + len > full.length) continue;
+        const seg = full.slice(i, i+len);
+        if (textSimilarityNorm(seg, p) >= .78) return true;
+      }
+    }
+    return false;
   }
 
   function findContainingAMatch(bText, aCues) {
