@@ -614,7 +614,8 @@
 
   async function exportPptx(){
     if(!state.blocks.length)return alert('請先解析字幕。');
-    if(typeof PptxGenJS==='undefined')return alert('PPTX 元件尚未載入，請重新整理頁面。');
+    if(typeof JSZip==='undefined')return alert('PPTX 相依元件 JSZip 尚未載入，請重新整理頁面；若仍出現，請確認 vendor/jszip.min.js 與 index.html 位於同一份工具資料夾。');
+    if(typeof PptxGenJS==='undefined')return alert('PPTX 元件尚未載入，請重新整理頁面；若仍出現，請確認 vendor/pptxgen.min.js 已完整放入工具資料夾。');
     const pptx=new PptxGenJS();pptx.layout='LAYOUT_WIDE';pptx.author='Video Brief Builder';pptx.subject='影音需求簡報';pptx.title=`${state.projectName} ${state.versionName}`;pptx.company='';pptx.lang='zh-TW';pptx.theme={headFontFace:'Noto Sans TC',bodyFontFace:'Noto Sans TC',lang:'zh-TW'};
     const C={blue:'2457DB',blue2:'1A46B8',navy:'12266F',navy2:'091544',bg:'F8F9FD',ink:'252B3A',text:'4E5870',muted:'8792AC',line:'D9E1F3',pale:'EAF0FF',red:'E9574F',green:'35A884',purple:'7B5BD6',orange:'DB9634'};
     const pages=getPages();
