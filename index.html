@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>影音需求生成器｜Video Brief Builder</title>
+  <meta name="description" content="匯入兩版字幕，自動比對剪輯差異、補影音需求並匯出 PPTX。" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div class="mesh" aria-hidden="true"></div>
+      <div class="hero-inner">
+        <div>
+          <p class="eyebrow">VIDEO BRIEF BUILDER · V1 PROTOTYPE</p>
+          <h1>影音需求生成器</h1>
+          <p class="hero-copy">兩版字幕自動比對 → 找出移除／新增／調換／文字修改 → 補需求 → 自動排版 → 匯出 PPTX。</p>
+        </div>
+        <div class="hero-actions">
+          <button class="btn ghost light" id="loadDemoBtn">載入示範</button>
+          <button class="btn ghost light" id="importProjectBtn">匯入專案</button>
+          <button class="btn primary light" id="exportProjectBtn">匯出 JSON</button>
+          <input id="projectFileInput" type="file" accept="application/json,.json" hidden />
+        </div>
+      </div>
+    </header>
+
+    <main class="workspace">
+      <section class="project-bar card">
+        <div class="field compact grow">
+          <label for="projectName">專案名稱</label>
+          <input id="projectName" value="影音需求" placeholder="例如：再行銷3" />
+        </div>
+        <div class="field compact version-field">
+          <label for="versionName">版本</label>
+          <input id="versionName" value="ACO" placeholder="ACO / BCO" />
+        </div>
+        <div class="field compact density-field">
+          <label for="densitySelect">簡報密度</label>
+          <select id="densitySelect">
+            <option value="relaxed">舒適</option>
+            <option value="standard" selected>標準</option>
+            <option value="compact">緊湊</option>
+          </select>
+        </div>
+        <div class="field compact merge-field">
+          <label for="mergeSelect">字幕合併</label>
+          <select id="mergeSelect">
+            <option value="short">短句</option>
+            <option value="standard" selected>標準</option>
+            <option value="long">長句</option>
+          </select>
+        </div>
+      </section>
+
+      <section class="upload-grid">
+        <article class="upload-card card" id="oldDropZone">
+          <div class="step">01</div>
+          <div class="upload-card-head">
+            <div>
+              <h2>原始順剪字幕 A</h2>
+              <p>影音夥伴提供的版本</p>
+            </div>
+            <span class="file-badge" id="oldFileBadge">尚未匯入</span>
+          </div>
+          <label class="drop-button" for="oldSubtitleInput">
+            <strong>選擇字幕檔</strong>
+            <span>TXT / SRT / VTT</span>
+          </label>
+          <input id="oldSubtitleInput" type="file" accept=".txt,.srt,.vtt,text/plain,text/vtt,application/x-subrip" hidden />
+          <textarea id="oldPaste" class="paste-area" placeholder="或直接貼上原始字幕內容"></textarea>
+        </article>
+
+        <article class="upload-card card accent" id="newDropZone">
+          <div class="step">02</div>
+          <div class="upload-card-head">
+            <div>
+              <h2>重剪版本字幕 B</h2>
+              <p>自己重剪後的新字幕；可留空只做單版需求</p>
+            </div>
+            <span class="file-badge" id="newFileBadge">選填</span>
+          </div>
+          <label class="drop-button" for="newSubtitleInput">
+            <strong>選擇字幕檔</strong>
+            <span>TXT / SRT / VTT</span>
+          </label>
+          <input id="newSubtitleInput" type="file" accept=".txt,.srt,.vtt,text/plain,text/vtt,application/x-subrip" hidden />
+          <textarea id="newPaste" class="paste-area" placeholder="或直接貼上重剪版字幕內容"></textarea>
+        </article>
+      </section>
+
+      <section class="action-row">
+        <button id="analyzeBtn" class="btn primary big">開始解析／比對</button>
+        <button id="clearBtn" class="btn ghost big">清空</button>
+        <span class="privacy-note">所有字幕與需求都在瀏覽器本機處理，不會上傳到伺服器。</span>
+      </section>
+
+      <section id="resultsSection" class="results hidden">
+        <div class="summary card">
+          <div class="summary-head">
+            <div>
+              <p class="eyebrow blue">DIFF SUMMARY</p>
+              <h2>版本差異</h2>
+            </div>
+            <div class="summary-actions">
+              <button id="presetBtn" class="btn ghost">編輯預設需求</button>
+              <button id="previewBtn" class="btn ghost">簡報預覽</button>
+              <button id="exportPptxBtn" class="btn primary">匯出 PPTX</button>
+            </div>
+          </div>
+          <div id="summaryChips" class="summary-chips"></div>
+          <div class="filter-row" id="filterRow"></div>
+        </div>
+
+        <div class="editor-layout">
+          <aside class="sidebar card">
+            <h3>整支影片需求</h3>
+            <p class="subtle">不綁特定台詞，例如整體加速、字幕字型、音樂方向。</p>
+            <div id="globalReqList" class="mini-list"></div>
+            <button id="addGlobalReqBtn" class="btn ghost full">＋ 新增整體需求</button>
+            <hr />
+            <h3>快速檢視</h3>
+            <label class="toggle-line"><input type="checkbox" id="changedOnlyToggle" /> 只顯示有異動</label>
+            <label class="toggle-line"><input type="checkbox" id="autoReqToggle" checked /> 比對後自動帶入基礎需求</label>
+            <hr />
+            <h3>輸出資訊</h3>
+            <div id="pageEstimate" class="page-estimate">尚未計算</div>
+          </aside>
+
+          <div class="blocks-wrap">
+            <div id="blocksContainer" class="blocks"></div>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal hidden" id="presetModal" role="dialog" aria-modal="true" aria-labelledby="presetModalTitle">
+    <div class="modal-backdrop" data-close-modal="presetModal"></div>
+    <div class="modal-panel wide">
+      <div class="modal-head">
+        <div><p class="eyebrow blue">PRESET LIBRARY</p><h2 id="presetModalTitle">預設需求</h2></div>
+        <button class="icon-btn" data-close-modal="presetModal">×</button>
+      </div>
+      <p class="subtle">這些快捷需求會出現在每個台詞區塊，可自行新增／刪除。修改會保存在此瀏覽器。</p>
+      <div id="presetEditor" class="preset-editor"></div>
+      <div class="modal-actions">
+        <button id="resetPresetsBtn" class="btn ghost">恢復預設</button>
+        <button id="addPresetBtn" class="btn ghost">＋ 新增預設</button>
+        <button id="savePresetsBtn" class="btn primary">儲存</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal hidden" id="previewModal" role="dialog" aria-modal="true" aria-labelledby="previewModalTitle">
+    <div class="modal-backdrop" data-close-modal="previewModal"></div>
+    <div class="modal-panel xwide">
+      <div class="modal-head">
+        <div><p class="eyebrow blue">SLIDE PREVIEW</p><h2 id="previewModalTitle">簡報自動分頁預覽</h2></div>
+        <button class="icon-btn" data-close-modal="previewModal">×</button>
+      </div>
+      <div id="slidePreview" class="slide-preview"></div>
+    </div>
+  </div>
+
+  <template id="blockTemplate">
+    <article class="script-block card">
+      <div class="block-status-line">
+        <span class="status-pill"></span>
+        <span class="position-meta"></span>
+        <div class="block-tools"><button class="mini-tool merge-prev" type="button">↑ 合併上一段</button><button class="mini-tool merge-next" type="button">↓ 合併下一段</button><button class="mini-tool split-here" type="button">↕ 從游標拆分</button></div><label class="break-toggle"><input type="checkbox" class="force-break" /> 此處強制換頁</label>
+      </div>
+      <div class="block-grid">
+        <div class="block-main">
+          <div class="time-row"></div>
+          <textarea class="script-text"></textarea>
+          <div class="old-text-wrap hidden"><span>舊版</span><div class="old-text"></div></div>
+
+          <div class="requirements-section">
+            <div class="section-title-row"><h4>影音需求</h4><span class="auto-hint"></span></div>
+            <div class="preset-chips"></div>
+            <div class="requirement-list"></div>
+            <div class="add-inline-row">
+              <input class="custom-req-input" placeholder="輸入自訂需求，例如：字卡進場改成從左至右展開" />
+              <button class="btn tiny add-custom-req">＋</button>
+            </div>
+          </div>
+
+          <div class="links-section">
+            <div class="section-title-row"><h4>REF／超連結</h4></div>
+            <div class="link-list"></div>
+            <div class="link-add-grid">
+              <input class="link-label-input" placeholder="顯示名稱，例如：REF1" />
+              <input class="link-url-input" placeholder="https://…" />
+              <button class="btn tiny add-link">＋</button>
+            </div>
+          </div>
+        </div>
+        <div class="block-side">
+          <div class="side-card">
+            <h4>參考圖片</h4>
+            <div class="image-list"></div>
+            <label class="image-upload-btn">＋ 加入圖片<input class="image-input" type="file" accept="image/*" multiple hidden /></label>
+          </div>
+        </div>
+      </div>
+    </article>
+  </template>
+
+  <script src="vendor/pptxgen.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
