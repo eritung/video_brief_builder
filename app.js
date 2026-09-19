@@ -1,12 +1,12 @@
-/* Video Brief Builder V1.4 - browser-only prototype */
+/* Video Brief Builder V1.6 - browser-only prototype */
 (() => {
   'use strict';
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const STORAGE_KEY = 'videoBriefBuilderV14Project';
-  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
-  const PRESET_KEY = 'videoBriefBuilderV1Presets';
+  const STORAGE_KEY = 'videoBriefBuilderV16Project';
+  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
+  const PRESET_KEY = 'videoBriefBuilderV16Presets';
 
   const STATUS_META = {
     unchanged: { label: '未變更', cls: 'status-unchanged' },
@@ -19,35 +19,55 @@
     manual: { label: '自訂頁', cls: 'status-manual' },
   };
 
+  const PRESET_CATEGORIES = [
+    { cat:'畫面', title:'畫面', hint:'鏡位、畫面位置與畫面處理' },
+    { cat:'字幕', title:'字幕', hint:'一般字幕、超大字幕與字幕移除' },
+    { cat:'字卡', title:'字卡', hint:'字卡、Highlight 與逐項文字' },
+    { cat:'素材', title:'素材', hint:'影片素材、滿版視覺與螢幕錄影' },
+    { cat:'聲音', title:'聲音', hint:'音效、背景音樂與聲音節點' },
+    { cat:'動畫', title:'動畫', hint:'進場、轉場與動態效果' },
+    { cat:'剪輯', title:'剪輯', hint:'加速、停頓與順序調整' },
+    { cat:'移除', title:'移除', hint:'刪除片段或指定字詞' },
+    { cat:'其他', title:'其他', hint:'無法歸類的補充需求' },
+  ];
+  const PRESET_CATEGORY_ORDER = PRESET_CATEGORIES.map(x => x.cat);
+  const PRESET_CATEGORY_INFO = Object.fromEntries(PRESET_CATEGORIES.map(x => [x.cat, x]));
+
   const DEFAULT_PRESETS = [
     { id: uid(), cat: '畫面', label: 'ACAM', text: 'ACAM' },
     { id: uid(), cat: '畫面', label: 'BCAM', text: 'BCAM' },
-    { id: uid(), cat: '素材', label: '影片素材', text: '加入影片素材' },
-    { id: uid(), cat: '素材', label: '滿版視覺', text: '加入滿版視覺' },
-    { id: uid(), cat: '素材', label: '螢幕錄影', text: '加入螢幕錄影' },
-    { id: uid(), cat: '字幕', label: '一般字幕', text: '一般字幕' },
-    { id: uid(), cat: '字幕', label: '超大字幕', text: '「關鍵字」→ 超大字幕' },
-    { id: uid(), cat: '字幕', label: '加入字卡', text: '加入字卡「文字」' },
-    { id: uid(), cat: '字幕', label: '逐項字卡', text: '逐項出現字卡：' },
-    { id: uid(), cat: '字幕', label: '移除字幕', text: '移除一般字幕' },
     { id: uid(), cat: '畫面', label: '畫面放大', text: '畫面逐漸放大' },
     { id: uid(), cat: '畫面', label: '快速拉近', text: '快速拉近畫面進場' },
     { id: uid(), cat: '畫面', label: '漸層底', text: '加入漸層底' },
     { id: uid(), cat: '畫面', label: '模糊背景', text: '畫面模糊處理' },
-    { id: uid(), cat: '音效', label: '重音', text: '加入「咚／叮」等重音音效' },
-    { id: uid(), cat: '音效', label: '轉場音效', text: '加入轉場音效' },
-    { id: uid(), cat: '音效', label: '換音樂', text: '從此處更換背景音樂' },
+    { id: uid(), cat: '字幕', label: '一般字幕', text: '一般字幕' },
+    { id: uid(), cat: '字幕', label: '超大字幕', text: '「關鍵字」→ 超大字幕' },
+    { id: uid(), cat: '字幕', label: '字幕避位', text: '一般字幕請避開右側／下方內容' },
+    { id: uid(), cat: '字幕', label: '移除字幕', text: '移除一般字幕' },
+    { id: uid(), cat: '字卡', label: '加入字卡', text: '加入字卡「文字」' },
+    { id: uid(), cat: '字卡', label: '逐項字卡', text: '逐項出現字卡：' },
+    { id: uid(), cat: '字卡', label: 'Highlight', text: 'Highlight 關鍵字「文字」' },
+    { id: uid(), cat: '字卡', label: '標題字卡', text: '加入標題字卡：「文字」' },
+    { id: uid(), cat: '素材', label: '影片素材', text: '加入影片素材' },
+    { id: uid(), cat: '素材', label: '滿版視覺', text: '加入滿版視覺' },
+    { id: uid(), cat: '素材', label: '螢幕錄影', text: '加入螢幕錄影' },
+    { id: uid(), cat: '素材', label: '課程主視覺', text: '加入課程主視覺' },
+    { id: uid(), cat: '聲音', label: '重音', text: '加入「咚／叮」等重音音效' },
+    { id: uid(), cat: '聲音', label: '轉場音效', text: '加入轉場音效' },
+    { id: uid(), cat: '聲音', label: '換音樂', text: '從此處更換背景音樂' },
+    { id: uid(), cat: '聲音', label: '清爽音效', text: '若合適，加入清爽的音效' },
     { id: uid(), cat: '動畫', label: '淡入', text: '畫面淡入' },
     { id: uid(), cat: '動畫', label: '翻面', text: '圖卡翻面進場' },
     { id: uid(), cat: '動畫', label: '縮放進場', text: '從物件中央縮放進場' },
     { id: uid(), cat: '動畫', label: '閃白光', text: '加入閃白光轉場' },
     { id: uid(), cat: '動畫', label: '底片閃光', text: '加入底片閃光效果' },
+    { id: uid(), cat: '動畫', label: '逐漸放大', text: '畫面持續微幅向中央放大' },
     { id: uid(), cat: '剪輯', label: '剪停頓', text: '剪掉不必要的停頓' },
     { id: uid(), cat: '剪輯', label: '整體加速', text: '影片整體加快 1.25 倍' },
-    { id: uid(), cat: '移除', label: '移除此段', text: '移除此段' },
-    { id: uid(), cat: '移除', label: '移除指定字', text: '移除「指定文字」' },
     { id: uid(), cat: '剪輯', label: '移到前面', text: '將此片段移到前面' },
     { id: uid(), cat: '剪輯', label: '移到後面', text: '將此片段移到後面' },
+    { id: uid(), cat: '移除', label: '移除此段', text: '移除此段' },
+    { id: uid(), cat: '移除', label: '移除指定字', text: '移除「指定文字」' },
   ];
 
   let presets = loadPresets();
@@ -112,7 +132,7 @@
   }
 
   function newProject() {
-    return { version: 1.4, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
+    return { version: 1.6, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
   }
 
 
@@ -164,18 +184,19 @@
     state.density = els.densitySelect.value;
     state.autoRequirements = els.autoReq.checked;
     if (!state.oldRaw) return alert('請先匯入影音夥伴提供的字幕 A，作為文字校正基準。');
-    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.4 會以 B 的時間軸、順序與分段作為簡報主結構。');
+    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.6 會以 B 的時間軸與順序為主，並在分段前先用 A 校正文字。');
 
     const oldCues = parseSubtitle(state.oldRaw);
     const newCues = parseSubtitle(state.newRaw);
     if (!oldCues.length) return alert('字幕 A 沒有讀到時間碼。請確認格式是否包含起訖時間。');
     if (!newCues.length) return alert('字幕 B 沒有讀到時間碼。請確認格式是否包含起訖時間。');
 
-    // V1.4: B 決定最終時間軸、順序與分段；A 只負責校正文字與後續差異判斷。
+    // V1.6: 先建立 B 的時間區塊，再在「進入人工分段前」用 A 校正文案。
+    // compareText 永遠保留 B 的原始轉錄，之後仍可拿來做差異判斷。
     const rawReviewBlocks = mergeCues(newCues, state.mergeMode).map((b,i)=>({
       ...b, reviewIndex:i, forceBreak:false, compareText:b.text, textSource:'B', timeSource:'B', correctedFromA:false
     }));
-    state.canonicalBlocks = seedReviewTextFromA(rawReviewBlocks, oldCues);
+    state.canonicalBlocks = seedReviewTextFromA(rawReviewBlocks, oldCues, {aggressive:true});
     state.blocks = [];
     segmentationHistory = [];
     state.stage = 'review';
@@ -218,13 +239,18 @@
         </div>`;
       const ta = $('.segment-text', node);
       let imeComposing = false;
-      let imeGuardUntil = 0;
+      let lastCompositionEndAt = 0;
       ta.addEventListener('compositionstart', () => { imeComposing = true; });
-      ta.addEventListener('compositionend', () => { imeComposing = false; imeGuardUntil = performance.now() + 140; });
-      ta.addEventListener('input', e => { b.text = e.target.value; b.manuallyEdited = true; saveProject(); });
+      ta.addEventListener('compositionend', () => { imeComposing = false; lastCompositionEndAt = Date.now(); });
+      ta.addEventListener('input', e => {
+        b.text = e.target.value;
+        b.manuallyEdited = true;
+        saveProject();
+      });
       ta.addEventListener('keydown', e => {
-        const imeActive = imeComposing || e.isComposing || e.keyCode === 229 || performance.now() < imeGuardUntil;
-        if (imeActive) return;
+        const imeActive = imeComposing || e.isComposing || e.keyCode === 229;
+        const justConfirmedCandidate = e.key === 'Enter' && Date.now() - lastCompositionEndAt < 80;
+        if (imeActive || justConfirmedCandidate) return;
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault();
           b.forceBreak = !b.forceBreak;
@@ -234,7 +260,9 @@
         }
         if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
           e.preventDefault();
-          splitCanonicalBlock(idx, ta.selectionStart);
+          b.text = ta.value;
+          b.manuallyEdited = true;
+          splitCanonicalBlockByParts(idx, ta.value.slice(0, ta.selectionStart), ta.value.slice(ta.selectionEnd));
           return;
         }
         if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey && ta.selectionStart === 0 && ta.selectionEnd === 0 && idx > 0) {
@@ -317,13 +345,30 @@
     const b = state.canonicalBlocks[index]; if (!b) return;
     const pos = Number(cursor);
     if (!Number.isFinite(pos) || pos <= 0 || pos >= b.text.length) return;
-    const left = b.text.slice(0,pos).trimEnd(), right = b.text.slice(pos).trimStart();
+    splitCanonicalBlockByParts(index, b.text.slice(0,pos), b.text.slice(pos));
+  }
+
+  function splitCanonicalBlockOnBlankLine(index, textarea) {
+    const value = String(textarea?.value || '');
+    const m = /\n[ \t]*\n/.exec(value);
+    if (!m) return false;
+    const left = value.slice(0, m.index).trimEnd();
+    const right = value.slice(m.index + m[0].length).trimStart();
+    if (!left || !right) return false;
+    splitCanonicalBlockByParts(index, left, right);
+    return true;
+  }
+
+  function splitCanonicalBlockByParts(index, leftText, rightText) {
+    const b = state.canonicalBlocks[index]; if (!b) return;
+    const left = String(leftText||'').trimEnd(), right = String(rightText||'').trimStart();
     if (!left || !right) return;
     pushSegmentationHistory();
     const anchorEl = els.segmentationList.querySelector(`[data-seg-id="${cssEscape(b.id)}"]`);
     const anchor = anchorEl ? {id:b.id, top:anchorEl.getBoundingClientRect().top} : null;
     const startSec=timeToSeconds(b.startRaw), endSec=timeToSeconds(b.endRaw);
-    const ratio=Math.max(.08,Math.min(.92,left.length/Math.max(1,left.length+right.length)));
+    const leftWeight=Math.max(1,norm(left).length), rightWeight=Math.max(1,norm(right).length);
+    const ratio=Math.max(.08,Math.min(.92,leftWeight/(leftWeight+rightWeight)));
     const splitSec=startSec+(endSec-startSec)*ratio;
     const mid=formatLikeTime(b.startRaw,splitSec);
     const originalEndRaw=b.endRaw, originalEnd=b.end;
@@ -408,19 +453,26 @@
     return a + (needsSpace ? ' ' : '') + b;
   }
 
-  function seedReviewTextFromA(reviewBlocks, oldCues) {
-    const {matches} = matchBBlocksToA(reviewBlocks, oldCues, .50);
+  function seedReviewTextFromA(reviewBlocks, oldCues, options={}) {
+    const aggressive = options.aggressive !== false;
+    const {matches} = matchBBlocksToA(reviewBlocks, oldCues, aggressive ? .44 : .50);
     const byB = new Map(matches.map(m => [m.bi, m]));
     return reviewBlocks.map((b, bi) => {
       const m = byB.get(bi);
       const out = {...b, compareText:b.compareText || b.text, aPreview:'', aMatchScore:m?.score || 0, correctedFromA:false};
-      // 只在高度可信時自動用 A 校正，避免 A/B 分段不同時把額外台詞硬塞進來。
-      if (m && m.score >= .84) {
+      if (!m) return out;
+
+      // 分段頁的目的，是讓使用者「拿 A 的正確字去切 B 的時間」。
+      // 因此 V1.6 比過去更積極套用 A；但仍要求基本覆蓋率，避免把完全不同的新句硬套進來。
+      const strongContainment = m.coverage >= .52 && m.score >= .62;
+      const confident = m.score >= (aggressive ? .70 : .82) && m.coverage >= .42;
+      if (confident || strongContainment) {
         out.text = m.aText;
         out.correctedFromA = true;
+        out.textSource = 'A';
         out.aStartIndex = m.aStart;
         out.aEndIndex = m.aEnd;
-      } else if (m && m.score >= .64) {
+      } else if (m.score >= .56) {
         out.aPreview = m.aText;
         out.aStartIndex = m.aStart;
         out.aEndIndex = m.aEnd;
@@ -618,14 +670,21 @@
     return b;
   }
 
+
+  function movedRequirementText(b) {
+    const oldTime = b.oldStartRaw ? `A ${b.oldStartRaw}–${b.oldEndRaw || '—'}` : `原始 A #${(b.oldIndex??0)+1}`;
+    const newTime = b.startRaw ? `新版 B ${b.startRaw}–${b.endRaw || '—'}` : `新版 B #${(b.newIndex??0)+1}`;
+    return `順序調換｜從 ${oldTime} 移至 ${newTime}`;
+  }
+
   function autoRequirementsFor(b) {
     if (b.status === 'removed') return [{ id:uid(), cat:'移除', text:'移除此段', auto:true }];
     if (b.status === 'added') return [{ id:uid(), cat:'剪輯', text:'新版 B 疑似新增片段｜請確認實際影片內容', auto:true }];
-    if (b.status === 'moved') return [{ id:uid(), cat:'剪輯', text:`順序調換｜原始 A #${(b.oldIndex??0)+1} → 新版 B #${(b.newIndex??0)+1}`, auto:true }];
+    if (b.status === 'moved') return [{ id:uid(), cat:'剪輯', text:movedRequirementText(b), auto:true }];
     if (b.status === 'modified') return [{ id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整｜文字請以字幕 A 校正後版本為準', auto:true }];
     if (b.status === 'uncertain') return [{ id:uid(), cat:'剪輯', text:'新版 B 轉錄與字幕 A 差異較大｜請確認實際影片內容', auto:true }];
     if (b.status === 'moved_modified') return [
-      { id:uid(), cat:'剪輯', text:`順序調換｜原始 A #${(b.oldIndex??0)+1} → 新版 B #${(b.newIndex??0)+1}`, auto:true },
+      { id:uid(), cat:'剪輯', text:movedRequirementText(b), auto:true },
       { id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整｜文字請以字幕 A 校正後版本為準', auto:true }
     ];
     return [];
@@ -786,7 +845,47 @@
 
   function renderPresetChips(node,b) {
     const wrap=$('.preset-chips',node); wrap.innerHTML='';
-    presets.forEach(p=>{const btn=document.createElement('button');btn.className='preset-chip';btn.textContent=p.label;btn.title=p.text;btn.addEventListener('click',()=>{b.requirements.push({id:uid(),cat:p.cat,text:p.text});saveProject();renderBlocks();});wrap.appendChild(btn);});
+    const grouped = groupPresets(presets);
+    grouped.forEach(group => {
+      const box = document.createElement('div');
+      box.className = 'preset-group';
+      box.dataset.cat = group.cat;
+      const info = PRESET_CATEGORY_INFO[group.cat] || {title:group.cat, hint:''};
+      box.innerHTML = `<div class="preset-group-head"><span class="group-chip cat-${escapeAttr(group.cat)}">${escapeHtml(info.title)}</span><span>${escapeHtml(info.hint || '')}</span></div><div class="preset-chip-row"></div>`;
+      const row = $('.preset-chip-row', box);
+      group.items.forEach(p=>{
+        const btn=document.createElement('button');
+        btn.className='preset-chip';
+        btn.dataset.cat=p.cat;
+        btn.textContent=p.label;
+        btn.title=p.text;
+        btn.addEventListener('click',()=>{b.requirements.push({id:uid(),cat:p.cat,text:p.text});saveProject();renderBlocks();});
+        row.appendChild(btn);
+      });
+      wrap.appendChild(box);
+    });
+  }
+
+  function groupPresets(list) {
+    const normalized = (list || []).map(p => ({...p, cat: normalizePresetCategory(p.cat, p.label, p.text)}));
+    const groups = [];
+    PRESET_CATEGORY_ORDER.forEach(cat => {
+      const items = normalized.filter(p => p.cat === cat);
+      if (items.length) groups.push({cat, items});
+    });
+    const known = new Set(PRESET_CATEGORY_ORDER);
+    const rest = normalized.filter(p => !known.has(p.cat));
+    if (rest.length) groups.push({cat:'其他', items:rest.map(p=>({...p, cat:p.cat || '其他'}))});
+    return groups;
+  }
+
+  function normalizePresetCategory(cat, label='', text='') {
+    const src = `${label} ${text}`;
+    if (cat === '音效') return '聲音';
+    if (cat === '字幕' && /字卡|Highlight|highlight|逐項|標題/.test(src)) return '字卡';
+    if (cat === '素材' && /ACAM|BCAM|畫面|漸層|模糊|放大|拉近/.test(src)) return '畫面';
+    if (cat === '動畫轉場') return '動畫';
+    return cat || '其他';
   }
 
   function renderRequirements(node,b) {
@@ -799,20 +898,75 @@
   function renderImages(node,b){const wrap=$('.image-list',node);wrap.innerHTML='';b.images.forEach((im,i)=>{const d=document.createElement('div');d.className='image-thumb';d.innerHTML=`<img src="${im.data}" alt="${escapeAttr(im.name||'REF')}"><button>×</button>`;$('button',d).addEventListener('click',()=>{b.images.splice(i,1);saveProject();renderBlocks();});wrap.appendChild(d);});}
 
   function getPages() {
-    const cap = state.density==='compact'?9.6:state.density==='relaxed'?6.2:7.8;
-    const pages=[]; let cur={blocks:[],units:0};
-    const push=()=>{if(cur.blocks.length){pages.push(cur);cur={blocks:[],units:0};}};
-    if(state.globalRequirements.some(Boolean)) pages.push({global:true,blocks:[],units:3});
+    const maxContentH = 5.45;
+    const gap = state.density==='compact' ? .10 : state.density==='relaxed' ? .18 : .14;
+    const pages=[]; let cur={blocks:[],heights:[],height:0};
+    const push=()=>{if(cur.blocks.length){pages.push(cur);cur={blocks:[],heights:[],height:0};}};
+    if(state.globalRequirements.some(Boolean)) pages.push({global:true,blocks:[],heights:[],height:3});
     const ordered = sortBlocksChronologically(state.blocks);
-    ordered.forEach(b=>{
-      if(b.type==='manual') { push(); pages.push({manual:true, blocks:[b], units:Math.max(4, estimateUnits(b))}); return; }
-      const units=estimateUnits(b);
-      if(b.forceBreak && cur.blocks.length) push();
-      if(cur.blocks.length && cur.units+units>cap) push();
-      cur.blocks.push(b);cur.units+=units;
-    }); push(); return pages;
+    ordered.forEach(original=>{
+      if(original.type==='manual') { push(); pages.push({manual:true, blocks:[original], heights:[4.95], height:4.95}); return; }
+      const chunks = splitBlockForSlides(original, maxContentH);
+      chunks.forEach((b,chunkIndex)=>{
+        const h=Math.min(maxContentH,pptBlockHeight(b));
+        const mustBreak = chunkIndex===0 && b.forceBreak;
+        const nextHeight = cur.blocks.length ? cur.height + gap + h : h;
+        if(mustBreak && cur.blocks.length) push();
+        if(cur.blocks.length && nextHeight > maxContentH+.001) push();
+        cur.blocks.push(b); cur.heights.push(h); cur.height = cur.blocks.length===1 ? h : cur.height + gap + h;
+      });
+    });
+    push();
+    return pages;
   }
-  function estimateUnits(b){if(b.type==='manual'){let mu=2.0+Math.min(2.8,(b.text||'').length/34)+b.requirements.length*.55+b.links.length*.3+(b.images.length?1.2:0);return Math.max(3.6,mu);}let u=.8;u+=Math.min(2.4,b.text.length/38*.75);u+=b.requirements.length*.52;u+=b.links.length*.28;if(b.images.length)u+=1.05+Math.min(1,b.images.length*.25);if(b.compareText&&b.textSource==='A'&&norm(b.compareText)!==norm(b.text)&&b.similarity<.90)u+=.55;return Math.max(1.35,u);}
+
+  function approxTextLines(text, charsPerLine) {
+    const parts=String(text||'').split(/\n/);
+    return Math.max(1, parts.reduce((n,line)=>n+Math.max(1,Math.ceil(norm(line).length/Math.max(1,charsPerLine))),0));
+  }
+
+  function pptBlockHeightRaw(b) {
+    if(b.type==='manual') return 4.95;
+    const imgCount=(b.images||[]).length;
+    const charsMain=imgCount?31:45;
+    const charsReq=imgCount?43:61;
+    const mainLines=approxTextLines(b.text, charsMain);
+    const reqLines=(b.requirements||[]).reduce((sum,r)=>sum+approxTextLines(r.text,charsReq),0);
+    const linkLines=(b.links||[]).reduce((sum,l)=>sum+approxTextLines(l.label||'REF',charsReq),0);
+    let h=.82 + mainLines*.34 + reqLines*.29 + linkLines*.25;
+    if((b.requirements||[]).length) h += .10 + (b.requirements||[]).length*.025;
+    if((b.links||[]).length) h += .06 + (b.links||[]).length*.02;
+    if(imgCount) h=Math.max(h, imgCount>1?3.55:2.20);
+    if(b._continuation) h+=.06;
+    const densityPad=state.density==='relaxed'?.18:state.density==='compact'?-.08:0;
+    return Math.max(1.28,h+densityPad);
+  }
+
+  function pptBlockHeight(b) {
+    return Math.min(5.45,pptBlockHeightRaw(b));
+  }
+
+  function splitBlockForSlides(block, maxH=5.45) {
+    const b=clone(block);
+    if(pptBlockHeightRaw(b)<=maxH) return [b];
+    const reqs=[...(b.requirements||[])], links=[...(b.links||[])];
+    const chunks=[];
+    let cur={...clone(b),requirements:[],links:[],images:[...(b.images||[])]};
+    const flush=()=>{if(cur.requirements.length||cur.links.length||!chunks.length){chunks.push(cur);cur={...clone(b),requirements:[],links:[],images:[],forceBreak:false,_continuation:true};}};
+    for(const r of reqs){
+      const test={...cur,requirements:[...cur.requirements,r]};
+      if((cur.requirements.length||cur.links.length) && pptBlockHeightRaw(test)>maxH){flush();cur.requirements.push(r);} else cur.requirements.push(r);
+    }
+    for(const l of links){
+      const test={...cur,links:[...cur.links,l]};
+      if((cur.requirements.length||cur.links.length) && pptBlockHeightRaw(test)>maxH){flush();cur.links.push(l);} else cur.links.push(l);
+    }
+    flush();
+    return chunks.map((x,i)=>({...x,_continuation:i>0}));
+  }
+
+  function estimateUnits(b){ return pptBlockHeight(b); }
+
   function updatePageEstimate(){if(!state.blocks.length){els.pageEstimate.textContent='尚未計算';return;}const pages=getPages();els.pageEstimate.innerHTML=`預估 <strong>${pages.length}</strong> 頁<br><span style="font-weight:400;color:#6f7a95">依「${state.density==='compact'?'緊湊':state.density==='relaxed'?'舒適':'標準'}」密度自動分頁</span>`;}
 
   function openPreviewModal(){renderSlidePreview();els.previewModal.classList.remove('hidden');}
@@ -836,7 +990,7 @@
     if(typeof JSZip==='undefined')return alert('PPTX 相依元件 JSZip 尚未載入，請重新整理頁面；若仍出現，請確認 vendor/jszip.min.js 與 index.html 位於同一份工具資料夾。');
     if(typeof PptxGenJS==='undefined')return alert('PPTX 元件尚未載入，請重新整理頁面；若仍出現，請確認 vendor/pptxgen.min.js 已完整放入工具資料夾。');
     const pptx=new PptxGenJS();pptx.layout='LAYOUT_WIDE';pptx.author='Video Brief Builder';pptx.subject='影音需求簡報';pptx.title=`${state.projectName} ${state.versionName}`;pptx.company='';pptx.lang='zh-TW';pptx.theme={headFontFace:'Noto Sans TC',bodyFontFace:'Noto Sans TC',lang:'zh-TW'};
-    const C={blue:'2457DB',blue2:'1A46B8',navy:'12266F',navy2:'091544',bg:'F8F9FD',ink:'252B3A',text:'3F485D',muted:'667189',line:'D9E1F3',pale:'EAF0FF',red:'E9574F',green:'35A884',purple:'7B5BD6',orange:'DB9634'};
+    const C={blue:'2457DB',blue2:'1A46B8',navy:'12266F',navy2:'091544',bg:'F8F9FD',ink:'252B3A',text:'3F485D',muted:'55627D',line:'D9E1F3',pale:'EAF0FF',red:'E9574F',green:'35A884',purple:'7B5BD6',orange:'DB9634'};
     const pages=getPages();
     // cover
     let s=pptx.addSlide();s.background={color:C.navy2};addMesh(s,pptx,C);s.addText(`/ ${state.projectName}`,{x:.78,y:2.55,w:8.9,h:.62,fontFace:'Noto Sans TC',fontSize:32,bold:true,color:'FFFFFF',margin:0});s.addText(state.versionName||'VIDEO BRIEF',{x:.82,y:3.32,w:6,h:.28,fontFace:'Noto Sans TC',fontSize:14,bold:true,color:'DCE6FF',charSpacing:1.2,margin:0});s.addText('字幕差異比對 × 影音需求',{x:.82,y:4.02,w:4.2,h:.27,fontFace:'Noto Sans TC',fontSize:13,color:'D6E0FF',margin:0});
@@ -844,8 +998,8 @@
       const sl=pptx.addSlide();sl.background={color:C.bg};addEdgeMesh(sl,pptx,C);addPptTitle(sl,C,`${state.projectName} - ${state.versionName}`);
       if(p.global){sl.addText('整支影片需求',{x:.72,y:1.35,w:2.2,h:.36,fontFace:'Noto Sans TC',fontSize:16,bold:true,color:C.ink,margin:0});let y=1.95;state.globalRequirements.filter(Boolean).forEach((r,i)=>{sl.addShape(pptx.ShapeType.roundRect,{x:.72,y,w:9.9,h:.68,rectRadius:.06,fill:{color:'FFFFFF'},line:{color:C.line}});sl.addText(`${i+1}. ${r}`,{x:.95,y:y+.2,w:9.35,h:.26,fontFace:'Noto Sans TC',fontSize:13,color:C.text,margin:0});y+=.82;});return;}
       if(p.manual){addPptManualPage(sl,pptx,C,p.blocks[0]);return;}
-      const n=p.blocks.length;let y=1.18;const avail=5.7;const gap=.13;const heights=p.blocks.map(b=>Math.max(.9,estimateUnits(b)/p.units*(avail-gap*(n-1))));
-      p.blocks.forEach((b,bi)=>{const h=Math.max(1.05,heights[bi]);addPptBlock(sl,pptx,C,b,.72,y,10.45,h);y+=h+gap;});
+      let y=1.18;const gap=state.density==='compact'?.10:state.density==='relaxed'?.18:.14;
+      p.blocks.forEach((b,bi)=>{const h=(p.heights&&p.heights[bi])||pptBlockHeight(b);addPptBlock(sl,pptx,C,b,.72,y,10.45,h);y+=h+gap;});
     });
     const safe=(state.projectName||'影音需求').replace(/[\\/:*?"<>|]/g,'_');
     await pptx.writeFile({fileName:`${safe}_${state.versionName||''}_影音需求.pptx`});
@@ -862,22 +1016,43 @@
     if((b.images||[]).length){try{sl.addImage({data:b.images[0].data,x:9.2,y:2.0,w:1.55,h:1.8});}catch(_){}}
   }
 
-  function addPptTitle(sl,C,title){sl.addText('/ '+title,{x:.68,y:.42,w:10.65,h:.42,fontFace:'Noto Sans TC',fontSize:23,bold:true,color:C.blue,margin:0});}
+  function addPptTitle(sl,C,title){sl.addText('/ '+title,{x:.68,y:.38,w:10.65,h:.46,fontFace:'Noto Sans TC',fontSize:25,bold:true,color:C.blue,margin:0});}
   function addPptBlock(sl,pptx,C,b,x,y,w,h){
-    const red=b.status==='removed';sl.addShape(pptx.ShapeType.roundRect,{x,y,w,h,rectRadius:.05,fill:{color:'FFFFFF'},line:{color:C.line,width:.8}});sl.addShape(pptx.ShapeType.rect,{x,y:y+.14,w:.055,h:Math.max(.22,h-.28),fill:{color:red?C.red:C.blue},line:{color:red?C.red:C.blue}});
-    const meta=STATUS_META[b.status]||STATUS_META.unchanged; const statusColor=b.status==='removed'?C.red:b.status==='added'?C.green:b.status.includes('moved')?C.purple:b.status==='modified'?C.orange:'7C879E';
-    sl.addShape(pptx.ShapeType.roundRect,{x:x+.2,y:y+.15,w:.92,h:.29,rectRadius:.05,fill:{color:statusColor},line:{color:statusColor}});sl.addText(meta.label,{x:x+.2,y:y+.205,w:.92,h:.16,fontFace:'Noto Sans TC',fontSize:7.8,bold:true,color:'FFFFFF',align:'center',margin:0});
+    const red=b.status==='removed';
+    sl.addShape(pptx.ShapeType.roundRect,{x,y,w,h,rectRadius:.05,fill:{color:'FFFFFF'},line:{color:C.line,width:.8}});
+    sl.addShape(pptx.ShapeType.rect,{x,y:y+.12,w:.055,h:Math.max(.22,h-.24),fill:{color:red?C.red:C.blue},line:{color:red?C.red:C.blue}});
+    const meta=STATUS_META[b.status]||STATUS_META.unchanged;
+    const statusColor=b.status==='removed'?C.red:b.status==='added'?C.green:b.status.includes('moved')?C.purple:b.status==='modified'?C.orange:'7C879E';
+    sl.addShape(pptx.ShapeType.roundRect,{x:x+.20,y:y+.15,w:1.00,h:.32,rectRadius:.05,fill:{color:statusColor},line:{color:statusColor}});
+    sl.addText(meta.label,{x:x+.20,y:y+.208,w:1.00,h:.18,fontFace:'Noto Sans TC',fontSize:9.8,bold:true,color:'FFFFFF',align:'center',margin:0});
     const primaryTime=b.timeSource==='B'?`B  ${b.startRaw||'—'} → ${b.endRaw||'—'}`:`A  ${b.startRaw||'—'} → ${b.endRaw||'—'}（移除）`;
-    sl.addText(primaryTime,{x:x+1.26,y:y+.18,w:3.4,h:.19,fontFace:'Noto Sans TC',fontSize:9.4,bold:true,color:C.blue2,margin:0});
-    if(b.timeSource==='B'&&b.oldStartRaw){sl.addText(`A ${b.oldStartRaw} → ${b.oldEndRaw||'—'}`,{x:x+4.75,y:y+.19,w:2.7,h:.18,fontFace:'Noto Sans TC',fontSize:8.6,color:C.muted,margin:0});}
-    const reqCount=b.requirements.length, linkCount=b.links.length, imgCount=b.images.length; const textH=Math.max(.34,Math.min(.82,h*.36));
-    sl.addText(`「${b.text}」`,{x:x+.22,y:y+.5,w:imgCount?7.2:9.8,h:textH,fontFace:'Noto Sans TC',fontSize:h<1.35?11.8:13.0,bold:true,color:red?C.red:C.ink,margin:0.03,breakLine:false,strike:red});
-    let ry=y+.5+textH+.08; const rw=imgCount?7.25:9.85; const lineH=.28;
-    b.requirements.slice(0,6).forEach(r=>{sl.addText('• '+r.text,{x:x+.28,y:ry,w:rw,h:lineH,fontFace:'Noto Sans TC',fontSize:10.4,color:r.cat==='移除'?C.red:C.text,margin:0});ry+=lineH+.03;});
-    b.links.slice(0,3).forEach(l=>{sl.addText([{text:'↗ '+(l.label||'REF'),options:{hyperlink:{url:l.url},color:C.blue2,underline:{color:C.blue2}}}],{x:x+.3,y:ry,w:rw,h:.22,fontFace:'Noto Sans TC',fontSize:9.6,margin:0});ry+=.25;});
-    if(imgCount){const imgs=b.images.slice(0,2);const ix=x+7.72,iw=2.36,ih=Math.min(h-.35,1.5);imgs.forEach((im,j)=>{try{sl.addImage({data:im.data,x:ix,y:y+.45+j*(ih+.08),w:iw,h:ih});}catch(_){}});}
-    if(reqCount>6||linkCount>3)sl.addText(`＋${Math.max(0,reqCount-6)+Math.max(0,linkCount-3)} 項未展開`,{x:x+w-1.72,y:y+h-.25,w:1.4,h:.18,fontFace:'Noto Sans TC',fontSize:8.4,color:C.muted,align:'right',margin:0});
+    sl.addText(primaryTime,{x:x+1.34,y:y+.17,w:3.45,h:.23,fontFace:'Noto Sans TC',fontSize:12.2,bold:true,color:C.blue2,margin:0});
+    if(b.timeSource==='B'&&b.oldStartRaw){sl.addText(`A  ${b.oldStartRaw} → ${b.oldEndRaw||'—'}`,{x:x+4.92,y:y+.18,w:4.05,h:.22,fontFace:'Noto Sans TC',fontSize:11.6,bold:true,color:C.muted,margin:0});}
+    if(b._continuation){sl.addText('續頁',{x:x+w-1.06,y:y+.18,w:.72,h:.20,fontFace:'Noto Sans TC',fontSize:10.2,bold:true,color:C.muted,align:'right',margin:0});}
+
+    const imgCount=(b.images||[]).length;
+    const mainChars=imgCount?31:45;
+    const textLines=approxTextLines(b.text,mainChars);
+    const textH=Math.max(.40,textLines*.34);
+    sl.addText(`「${b.text}」`,{x:x+.24,y:y+.56,w:imgCount?7.18:9.78,h:textH,fontFace:'Noto Sans TC',fontSize:15.0,bold:true,color:red?C.red:C.ink,margin:0.02,strike:red,breakLine:false,valign:'top'});
+
+    let ry=y+.56+textH+.10; const rw=imgCount?7.16:9.72;
+    (b.requirements||[]).forEach(r=>{
+      const lines=approxTextLines(r.text,imgCount?43:61); const rh=Math.max(.27,lines*.29);
+      sl.addText('• '+r.text,{x:x+.29,y:ry,w:rw,h:rh,fontFace:'Noto Sans TC',fontSize:12.0,color:r.cat==='移除'?C.red:C.text,margin:0.01,valign:'top'}); ry+=rh+.025;
+    });
+    (b.links||[]).forEach(l=>{
+      const lines=approxTextLines(l.label||'REF',imgCount?43:61); const lh=Math.max(.24,lines*.25);
+      sl.addText([{text:'↗ '+(l.label||'REF'),options:{hyperlink:{url:l.url},color:C.blue2,underline:{color:C.blue2}}}],{x:x+.30,y:ry,w:rw,h:lh,fontFace:'Noto Sans TC',fontSize:11.0,margin:0,valign:'top'}); ry+=lh+.02;
+    });
+
+    if(imgCount){
+      const imgs=b.images.slice(0,2), ix=x+7.72, iw=2.36;
+      const available=Math.max(.9,h-.70), ih=Math.min(1.55,(available-(imgs.length-1)*.08)/Math.max(1,imgs.length));
+      imgs.forEach((im,j)=>{try{sl.addImage({data:im.data,x:ix,y:y+.53+j*(ih+.08),w:iw,h:ih});}catch(_){}});
+    }
   }
+
 
   function addMesh(sl,pptx,C){for(let i=0;i<18;i++){const y=1.0+i*.28;sl.addShape(pptx.ShapeType.arc,{x:6.1,y:y-1.1,w:7.8,h:2.35,adjustPoint:.25,rotate:8,line:{color:i%2?'5F83FF':'70D5FF',transparency:74,width:.7},fill:{color:C.navy2,transparency:100}});} }
   function addEdgeMesh(sl,pptx,C){sl.addShape(pptx.ShapeType.rect,{x:11.55,y:0,w:1.78,h:7.5,fill:{color:C.navy},line:{color:C.navy}});for(let i=0;i<14;i++){sl.addShape(pptx.ShapeType.arc,{x:11.25,y:.1+i*.48,w:2.35,h:1.25,rotate:15,line:{color:i%2?'5F83FF':'70D5FF',transparency:64,width:.7},fill:{color:C.navy,transparency:100}});}}
@@ -893,9 +1068,34 @@
   }
 
   function openPresetModal(){renderPresetEditor();els.presetModal.classList.remove('hidden');}
-  function renderPresetEditor(){els.presetEditor.innerHTML='';presets.forEach((p,i)=>{const row=document.createElement('div');row.className='preset-row';row.innerHTML=`<select class="pcat">${['畫面','字幕','素材','音效','剪輯','移除','動畫','其他'].map(c=>`<option ${c===p.cat?'selected':''}>${c}</option>`).join('')}</select><input class="plabel" value="${escapeAttr(p.label)}"><input class="ptext" value="${escapeAttr(p.text)}"><button>×</button>`;$('.pcat',row).addEventListener('change',e=>p.cat=e.target.value);$('.plabel',row).addEventListener('input',e=>p.label=e.target.value);$('.ptext',row).addEventListener('input',e=>p.text=e.target.value);$('button',row).addEventListener('click',()=>{presets.splice(i,1);renderPresetEditor();});els.presetEditor.appendChild(row);});}
-  function savePresetEditor(){localStorage.setItem(PRESET_KEY,JSON.stringify(presets));closeModal('presetModal');renderBlocks();}
-  function loadPresets(){try{const raw=localStorage.getItem(PRESET_KEY);return raw?JSON.parse(raw):clone(DEFAULT_PRESETS);}catch(_){return clone(DEFAULT_PRESETS);}}
+  function renderPresetEditor(){
+    els.presetEditor.innerHTML='';
+    const categoryOptions = PRESET_CATEGORY_ORDER.map(c=>`<option value="${escapeAttr(c)}">${escapeHtml(PRESET_CATEGORY_INFO[c]?.title || c)}</option>`).join('');
+    const grouped = groupPresets(presets);
+    grouped.forEach(group=>{
+      const panel=document.createElement('section');
+      panel.className='preset-editor-group';
+      panel.dataset.cat=group.cat;
+      const info=PRESET_CATEGORY_INFO[group.cat] || {title:group.cat,hint:''};
+      panel.innerHTML=`<div class="preset-editor-group-head"><span class="group-chip cat-${escapeAttr(group.cat)}">${escapeHtml(info.title)}</span><small>${escapeHtml(info.hint||'')}</small></div><div class="preset-editor-rows"></div>`;
+      const rows=$('.preset-editor-rows',panel);
+      group.items.forEach((p)=>{
+        const i=presets.findIndex(x=>x.id===p.id);
+        const row=document.createElement('div');row.className='preset-row';
+        row.innerHTML=`<select class="pcat">${categoryOptions}</select><input class="plabel" value="${escapeAttr(p.label)}"><input class="ptext" value="${escapeAttr(p.text)}"><button title="刪除">×</button>`;
+        $('.pcat',row).value=normalizePresetCategory(p.cat,p.label,p.text);
+        $('.pcat',row).addEventListener('change',e=>{presets[i].cat=e.target.value;renderPresetEditor();});
+        $('.plabel',row).addEventListener('input',e=>presets[i].label=e.target.value);
+        $('.ptext',row).addEventListener('input',e=>presets[i].text=e.target.value);
+        $('button',row).addEventListener('click',()=>{presets.splice(i,1);renderPresetEditor();});
+        rows.appendChild(row);
+      });
+      els.presetEditor.appendChild(panel);
+    });
+  }
+  function savePresetEditor(){presets=migratePresets(presets);localStorage.setItem(PRESET_KEY,JSON.stringify(presets));closeModal('presetModal');renderBlocks();}
+  function loadPresets(){try{const raw=localStorage.getItem(PRESET_KEY)||localStorage.getItem('videoBriefBuilderV1Presets');return raw?migratePresets(JSON.parse(raw)):clone(DEFAULT_PRESETS);}catch(_){return clone(DEFAULT_PRESETS);}}
+  function migratePresets(list){return (list||[]).map(p=>({...p,id:p.id||uid(),cat:normalizePresetCategory(p.cat,p.label,p.text),label:p.label||'未命名',text:p.text||''}));}
 
   function closeModal(id){$('#'+id)?.classList.add('hidden');}
 

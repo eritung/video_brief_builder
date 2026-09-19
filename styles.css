@@ -8,7 +8,7 @@
   --panel:#ffffff;
   --ink:#252b3a;
   --text:#4e5870;
-  --muted:#8a95ad;
+  --muted:#65718a;
   --line:#d9e1f3;
   --pale:#eaf0ff;
   --red:#e9574f;
@@ -107,3 +107,70 @@ button{cursor:pointer}
 .segment-text:focus{border-color:#8ca8ec;box-shadow:0 0 0 3px rgba(36,87,219,.09)}
 .segment-item:focus-within{border-color:#b9c9ee;box-shadow:0 9px 24px rgba(36,87,219,.09)}
 @media (max-width:650px){.keyboard-hint{gap:6px}.segment-a-note{margin-left:0}.source-pill{margin-left:auto}}
+
+
+/* V1.5 readability + safer segmentation */
+.upload-card{overflow:visible}
+.upload-card-head{padding-right:0}
+.upload-card p{font-size:14px;color:#65718a}
+.file-badge{font-size:12px}
+.drop-button span{font-size:13px;color:#65718a}
+.subtle{font-size:13px;color:#65718a}
+.position-meta{font-size:13px;color:#65718a}
+.time-row{font-size:13px;padding:6px 9px}
+.break-toggle{font-size:12px;color:#65718a}
+.auto-hint{font-size:11px;color:#65718a}
+.blocks-toolbar span{font-size:12px;color:#65718a}
+.format-note{font-size:11px}
+.segment-meta{font-size:13px}
+.segment-index{font-size:12px;width:28px;height:28px}
+.segment-text{font-size:17px;line-height:1.65;min-height:70px}
+.keyboard-hint{font-size:12px;color:#65718a}
+.source-pill{font-size:11px;padding:5px 9px}
+.segment-a-note{font-size:13px;color:#5f5338}
+.review-bottom span{font-size:13px;color:#65718a}
+.review-head p{font-size:14px}
+.privacy-note{font-size:13px;color:#65718a}
+.compare-rule p{font-size:13px}
+.summary-chip span{font-size:13px;color:#65718a}
+.slide-card .slide-block strong{font-size:11px}
+.slide-card .slide-block span{font-size:10px}
+
+.file-badge{max-width:46%;overflow:hidden;text-overflow:ellipsis;display:inline-block}
+
+/* V1.6 preset category grouping */
+.preset-chips{display:flex;flex-direction:column;gap:10px;margin-top:10px}
+.preset-group{--cat-color:var(--blue);--cat-bg:#f2f6ff;--cat-border:#cddaff;border:1px solid var(--cat-border);background:linear-gradient(180deg,#fff,var(--cat-bg));border-radius:12px;padding:10px 10px 9px;box-shadow:0 5px 12px rgba(18,38,111,.035)}
+.preset-group-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;min-width:0}
+.group-chip{display:inline-flex;align-items:center;justify-content:center;border-radius:999px;padding:4px 9px;color:#fff;font-size:11px;font-weight:900;letter-spacing:.02em;line-height:1;min-width:44px;white-space:nowrap}
+.preset-group-head span:last-child{font-size:11px;color:#65718a;line-height:1.35;overflow-wrap:anywhere}
+.preset-chip-row{display:flex;gap:7px;flex-wrap:wrap}
+.preset-chip{border:1px solid var(--cat-border);background:#fff;border-radius:999px;padding:6px 10px;font-size:12px;font-weight:800;color:var(--cat-color);box-shadow:0 2px 8px rgba(18,38,111,.04)}
+.preset-chip:hover{background:var(--cat-bg);border-color:var(--cat-color);transform:translateY(-1px)}
+.preset-group[data-cat="畫面"]{--cat-color:var(--blue);--cat-bg:#eef3ff;--cat-border:#c8d7ff}
+.preset-group[data-cat="字幕"]{--cat-color:#6d57d8;--cat-bg:#f3f0ff;--cat-border:#d9d1ff}
+.preset-group[data-cat="字卡"]{--cat-color:#9b47b8;--cat-bg:#fbf0ff;--cat-border:#edccfb}
+.preset-group[data-cat="素材"]{--cat-color:#138c88;--cat-bg:#edfbfa;--cat-border:#c4eeeb}
+.preset-group[data-cat="聲音"],.preset-group[data-cat="音效"]{--cat-color:#c27a22;--cat-bg:#fff6e8;--cat-border:#f0d5ae}
+.preset-group[data-cat="動畫"]{--cat-color:#506fd5;--cat-bg:#f0f4ff;--cat-border:#ccd7ff}
+.preset-group[data-cat="剪輯"]{--cat-color:#65718a;--cat-bg:#f3f5f9;--cat-border:#d6dde9}
+.preset-group[data-cat="移除"]{--cat-color:var(--red);--cat-bg:#fff1f0;--cat-border:#f3c6c1}
+.preset-group[data-cat="其他"]{--cat-color:#778099;--cat-bg:#f5f6fa;--cat-border:#d9dee9}
+.cat-字卡{background:#9b47b8}.cat-聲音{background:#c27a22}
+.cat-音效{background:#c27a22}
+.preset-editor{gap:12px}
+.preset-editor-group{--cat-color:var(--blue);--cat-bg:#f8faff;--cat-border:#dbe4fb;border:1px solid var(--cat-border);background:var(--cat-bg);border-radius:13px;padding:11px}
+.preset-editor-group[data-cat="畫面"]{--cat-color:var(--blue);--cat-bg:#f5f8ff;--cat-border:#cad8ff}
+.preset-editor-group[data-cat="字幕"]{--cat-color:#6d57d8;--cat-bg:#f7f4ff;--cat-border:#ded7ff}
+.preset-editor-group[data-cat="字卡"]{--cat-color:#9b47b8;--cat-bg:#fcf5ff;--cat-border:#efcffb}
+.preset-editor-group[data-cat="素材"]{--cat-color:#138c88;--cat-bg:#f3fcfb;--cat-border:#c9efed}
+.preset-editor-group[data-cat="聲音"],.preset-editor-group[data-cat="音效"]{--cat-color:#c27a22;--cat-bg:#fff8ee;--cat-border:#efd9b9}
+.preset-editor-group[data-cat="動畫"]{--cat-color:#506fd5;--cat-bg:#f4f6ff;--cat-border:#ced9ff}
+.preset-editor-group[data-cat="剪輯"]{--cat-color:#65718a;--cat-bg:#f6f7fa;--cat-border:#dae0ea}
+.preset-editor-group[data-cat="移除"]{--cat-color:var(--red);--cat-bg:#fff5f4;--cat-border:#f3c9c4}
+.preset-editor-group[data-cat="其他"]{--cat-color:#778099;--cat-bg:#f7f8fb;--cat-border:#dee3ed}
+.preset-editor-group-head{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+.preset-editor-group-head small{font-size:12px;color:#65718a;line-height:1.35}
+.preset-editor-rows{display:flex;flex-direction:column;gap:8px}
+.preset-row{background:#fff;border:1px solid rgba(217,225,243,.9);border-radius:10px;padding:7px}
+@media (max-width:650px){.preset-group-head{align-items:flex-start;flex-direction:column}.preset-chip{font-size:12px;padding:7px 10px}.preset-editor-group-head{align-items:flex-start;flex-direction:column}}

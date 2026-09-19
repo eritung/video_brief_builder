@@ -13,9 +13,9 @@
       <div class="mesh" aria-hidden="true"></div>
       <div class="hero-inner">
         <div>
-          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.4 PROTOTYPE</p>
+          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.6 PROTOTYPE</p>
           <h1>影音需求生成器</h1>
-          <p class="hero-copy">以重剪版字幕 B 決定時間軸與分段，字幕 A 負責校正文字 → 比對移除／調換／疑似新增 → 補需求 → 依新版時間排序 → 匯出 PPTX。</p>
+          <p class="hero-copy">先用字幕 A 校正重剪版 B 的文字，再以 B 決定時間軸與分段 → 分類補需求 → 比對移除／調換／疑似新增 → 匯出 PPTX。</p>
         </div>
         <div class="hero-actions">
           <button class="btn ghost light" id="loadDemoBtn">載入示範</button>
@@ -58,7 +58,6 @@
 
       <section class="upload-grid">
         <article class="upload-card card" id="oldDropZone">
-          <div class="step">01</div>
           <div class="upload-card-head">
             <div>
               <h2>原始順剪字幕 A</h2>
@@ -75,7 +74,6 @@
         </article>
 
         <article class="upload-card card accent" id="newDropZone">
-          <div class="step">02</div>
           <div class="upload-card-head">
             <div>
               <h2>重剪版本轉錄字幕 B</h2>
@@ -101,7 +99,7 @@
       </section>
 
       <section class="action-row">
-        <button id="analyzeBtn" class="btn primary big">整理字幕 B／檢查分段</button>
+        <button id="analyzeBtn" class="btn primary big">先套用 A 正確文字 → 整理 B 分段</button>
         <button id="clearBtn" class="btn ghost big">清空</button>
         <span class="privacy-note">所有字幕與需求都在瀏覽器本機處理，不會上傳到伺服器。</span>
       </section>
@@ -111,8 +109,8 @@
           <div>
             <p class="eyebrow blue">STEP 03 · LINE REVIEW</p>
             <h2>先確認重剪版 B 的台詞分段</h2>
-            <p>這一步以重剪後字幕 B 為時間軸。系統會在高信心時先用字幕 A 校正錯字；按 Enter 可拆成下一段；中文輸入法選字時的 Enter 不會觸發拆段。若誤拆，可直接按「復原上一個分段」。</p>
-            <div class="keyboard-hint"><span><kbd>Enter</kbd> 拆段</span><span><kbd>Backspace</kbd> 段首合併</span><span><kbd>Shift</kbd> + <kbd>Enter</kbd> 段內換行</span><span><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> 另起一頁</span><span>中文選字 Enter 已保護</span></div>
+            <p>這一步仍以重剪後字幕 B 為時間軸，但會先用字幕 A 校正可確認的文字，再讓你調整分段。Enter 只做同段換行；輸入一個空白行（連按兩次 Enter）才會拆成下一段，因此不會再和中文選字衝突。</p>
+            <div class="keyboard-hint"><span><kbd>Enter</kbd> 同段換行</span><span><kbd>Enter</kbd> × 2（空白行）拆成新段</span><span><kbd>Backspace</kbd> 段首合併</span><span><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> 另起一頁</span><span>中文選字 Enter 不會觸發分段</span></div>
           </div>
           <div class="review-head-actions">
             <span id="segmentationCount" class="review-count">0 段</span>
@@ -123,7 +121,7 @@
         </div>
         <div id="segmentationList" class="segmentation-list"></div>
         <div class="review-bottom card">
-          <span>建議先在這裡把 B 的斷句整理好；後面的需求頁會直接沿用這個新版時間軸。</span>
+          <span>此處顯示的是「B 的時間軸＋A 校正後文字」。先用換行整理閱讀，再用空白行切成新段；後面的需求頁會沿用這個結果。</span>
           <button class="btn primary" onclick="document.getElementById('confirmSegmentsBtn').click()">確認分段並進入需求編輯</button>
         </div>
       </section>
@@ -176,7 +174,7 @@
         <div><p class="eyebrow blue">PRESET LIBRARY</p><h2 id="presetModalTitle">預設需求</h2></div>
         <button class="icon-btn" data-close-modal="presetModal">×</button>
       </div>
-      <p class="subtle">這些快捷需求會出現在每個台詞區塊，可自行新增／刪除。修改會保存在此瀏覽器。</p>
+      <p class="subtle">這些快捷需求會依照「畫面、字幕、字卡、素材、聲音、動畫、剪輯、移除」分類顯示。可自行新增／刪除，修改會保存在此瀏覽器。</p>
       <div id="presetEditor" class="preset-editor"></div>
       <div class="modal-actions">
         <button id="resetPresetsBtn" class="btn ghost">恢復預設</button>
