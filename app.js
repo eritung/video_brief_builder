@@ -1,12 +1,12 @@
-/* Video Brief Builder V1.7 - browser-only prototype */
+/* Video Brief Builder V1.8 - browser-only prototype */
 (() => {
   'use strict';
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const STORAGE_KEY = 'videoBriefBuilderV17Project';
-  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV16Project','videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
-  const PRESET_KEY = 'videoBriefBuilderV17Presets';
+  const STORAGE_KEY = 'videoBriefBuilderV18Project';
+  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV17Project','videoBriefBuilderV16Project','videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
+  const PRESET_KEY = 'videoBriefBuilderV18Presets';
 
   const STATUS_META = {
     unchanged: { label: '未變更', cls: 'status-unchanged' },
@@ -14,6 +14,8 @@
     added: { label: '疑似新增', cls: 'status-added' },
     moved: { label: '順序調換', cls: 'status-moved' },
     modified: { label: '文字修改', cls: 'status-modified' },
+    partial_removed: { label: '部分移除', cls: 'status-partial_removed' },
+    moved_partial_removed: { label: '調換＋部分移除', cls: 'status-moved_partial_removed' },
     moved_modified: { label: '調換＋文字修改', cls: 'status-moved_modified' },
     uncertain: { label: '需確認', cls: 'status-uncertain' },
     manual: { label: '自訂頁', cls: 'status-manual' },
@@ -132,7 +134,7 @@
   }
 
   function newProject() {
-    return { version: 1.7, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
+    return { version: 1.8, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
   }
 
 
@@ -184,14 +186,14 @@
     state.density = els.densitySelect.value;
     state.autoRequirements = els.autoReq.checked;
     if (!state.oldRaw) return alert('請先匯入影音夥伴提供的字幕 A，作為文字校正基準。');
-    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.7 會先套用 A 的正確文字，再用 B 的分段與順序建立需求。');
+    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.8 會先用 A 校正 B 的文字，再辨識部分文字移除與順序調整。');
 
     const oldCues = parseSubtitle(state.oldRaw);
     const newCues = parseSubtitle(state.newRaw);
     if (!oldCues.length) return alert('字幕 A 沒有讀到時間碼。請確認格式是否包含起訖時間。');
     if (!newCues.length) return alert('字幕 B 沒有讀到時間碼。請確認格式是否包含起訖時間。');
 
-    // V1.7: 先建立 B 的順序區塊，再在「進入人工分段前」用 A 校正文案。
+    // V1.8: 先建立 B 的順序區塊，再在「進入人工分段前」用 A 校正文案；若 B 只保留部分內容，會用 A 校正後的保留文字顯示。
     // compareText 永遠保留 B 的原始轉錄，之後仍可拿來做差異判斷。
     const rawReviewBlocks = mergeCues(newCues, state.mergeMode).map((b,i)=>({
       ...b, reviewIndex:i, forceBreak:false, compareText:b.text, textSource:'B', timeSource:'B', correctedFromA:false
@@ -233,6 +235,7 @@
       node.innerHTML = `<div class="segment-meta"><span class="segment-index">${idx+1}</span><span>新版 B｜${escapeHtml(b.startRaw)} → ${escapeHtml(b.endRaw)}</span>${corrected}</div>
         <textarea class="segment-text" aria-label="第 ${idx+1} 段台詞">${escapeHtml(b.text)}</textarea>
         ${b.aPreview && !b.correctedFromA ? `<div class="segment-a-note"><strong>A 可能對應：</strong>${escapeHtml(b.aPreview)} <span>${Math.round((b.aMatchScore||0)*100)}%</span></div>` : ''}
+        ${(b.removedParts&&b.removedParts.length) ? `<div class="segment-a-note partial"><strong>已偵測移除部分文字：</strong>${escapeHtml(b.removedParts.map(x=>`「${x}」`).join('、'))}</div>` : ''}
         <div class="segment-tools">
           <div class="segment-tool-left"><button class="mini-tool seg-merge-prev">↑ 合併上一段</button><button class="mini-tool seg-merge-next">↓ 合併下一段</button></div>
           <label class="break-toggle"><input type="checkbox" class="seg-force-break" ${b.forceBreak?'checked':''}> 這句另起一頁</label>
@@ -395,8 +398,8 @@
     const mid=formatLikeTime(b.startRaw,splitSec);
     const originalEndRaw=b.endRaw, originalEnd=b.end;
     const rawParts=splitApproxText(b.compareText || b.text, ratio);
-    b.text=left; b.compareText=rawParts[0]; b.endRaw=mid; b.end=splitSec; b.aPreview=''; b.manuallyEdited=true;
-    const next={...clone(b), id:uid(), text:right, compareText:rawParts[1], startRaw:mid, start:splitSec, endRaw:originalEndRaw, end:originalEnd, forceBreak:false, aPreview:'', manuallyEdited:true};
+    b.text=left; b.compareText=rawParts[0]; b.endRaw=mid; b.end=splitSec; b.aPreview=''; b.removedParts=[]; b.removedRanges=[]; b.partialRemoved=false; b.manuallyEdited=true;
+    const next={...clone(b), id:uid(), text:right, compareText:rawParts[1], startRaw:mid, start:splitSec, endRaw:originalEndRaw, end:originalEnd, forceBreak:false, aPreview:'', removedParts:[], removedRanges:[], partialRemoved:false, manuallyEdited:true};
     state.canonicalBlocks.splice(index+1,0,next);
     state.canonicalBlocks.forEach((x,i)=>x.reviewIndex=i);
     saveProject();
@@ -481,23 +484,30 @@
     const byB = new Map(matches.map(m => [m.bi, m]));
     return reviewBlocks.map((b, bi) => {
       const m = byB.get(bi);
-      const out = {...b, compareText:b.compareText || b.text, aPreview:'', aMatchScore:m?.score || 0, correctedFromA:false};
+      const out = {...b, compareText:b.compareText || b.text, aPreview:'', aMatchScore:m?.score || 0, correctedFromA:false, partialRemoved:false, removedParts:[], removedRanges:[], aText:''};
       if (!m) return out;
 
-      // 分段頁的目的，是讓使用者「拿 A 的正確字去切 B 的時間」。
-      // 因此 V1.6 比過去更積極套用 A；但仍要求基本覆蓋率，避免把完全不同的新句硬套進來。
+      const analysis = analyzeAtoBText(m.aText, out.compareText || b.text);
       const bNorm = norm(out.compareText || b.text);
       const aNorm = norm(m.aText);
       const oneContainsOther = !!aNorm && !!bNorm && (aNorm.includes(bNorm) || bNorm.includes(aNorm));
-      const strongContainment = oneContainsOther && m.coverage >= .30 && m.score >= .55;
-      const confident = m.score >= (aggressive ? .64 : .78) && m.coverage >= .34;
-      if (confident || strongContainment) {
-        out.text = m.aText;
+      const strongContainment = oneContainsOther && m.coverage >= .25 && m.score >= .50;
+      const confident = m.score >= (aggressive ? .54 : .72) && m.coverage >= .25;
+
+      // 分段頁要先看到「用 A 校正過的 B 最終文字」。
+      // 若 B 只是轉錄錯字，顯示 A；若 B 少了某段文字，顯示 A 扣掉被剪掉的部分。
+      if (analysis.safeToApply || confident || strongContainment) {
+        out.text = analysis.displayText || m.aText;
+        out.aText = m.aText;
         out.correctedFromA = true;
         out.textSource = 'A';
         out.aStartIndex = m.aStart;
         out.aEndIndex = m.aEnd;
-      } else if (m.score >= .56) {
+        out.partialRemoved = !!analysis.isPartial;
+        out.removedParts = analysis.removedParts || [];
+        out.removedRanges = analysis.removedRanges || [];
+        out.partialConfidence = analysis.confidence || 0;
+      } else if (m.score >= .50) {
         out.aPreview = m.aText;
         out.aStartIndex = m.aStart;
         out.aEndIndex = m.aEnd;
@@ -506,11 +516,170 @@
     });
   }
 
+
+  function analyzeAtoBText(aText, bText) {
+    const a = String(aText || '').trim();
+    const b = String(bText || '').trim();
+    const aArr = normalizedCharMap(a);
+    const bArr = normalizedCharMap(b);
+    const aNorm = aArr.map(x => x.ch).join('');
+    const bNorm = bArr.map(x => x.ch).join('');
+    const base = { displayText: a, removedParts: [], removedRanges: [], isPartial: false, safeToApply: false, confidence: 0 };
+    if (!aNorm || !bNorm) return base;
+
+    const similarity = textSimilarity(a, b);
+    const lenDelta = aNorm.length - bNorm.length;
+    if (lenDelta < 2) {
+      base.safeToApply = similarity >= .50 || aNorm.includes(bNorm) || bNorm.includes(aNorm);
+      return base;
+    }
+
+    const matches = lcsIndexPairs(aArr.map(x => x.ch), bArr.map(x => x.ch));
+    const matchedA = new Set(matches.map(p => p[0]));
+    const matchedB = new Set(matches.map(p => p[1]));
+    const bKeepRatio = matchedB.size / Math.max(1, bArr.length);
+    const aKeepRatio = matchedA.size / Math.max(1, aArr.length);
+    const deletionRatio = lenDelta / Math.max(1, aArr.length);
+
+    const ranges = unmatchedARanges(aArr, matchedA)
+      .map(r => trimDeletionRange(a, r))
+      .filter(r => r && norm(a.slice(r.start, r.end)).length >= 2);
+
+    const confidence = Math.max(similarity, (bKeepRatio * .72 + aKeepRatio * .28));
+    const safePartial = ranges.length > 0 && bKeepRatio >= .68 && deletionRatio <= .58 && confidence >= .58;
+    if (safePartial) {
+      base.isPartial = true;
+      base.safeToApply = true;
+      base.confidence = confidence;
+      base.removedRanges = mergeDisplayRanges(ranges);
+      base.removedParts = base.removedRanges.map(r => a.slice(r.start, r.end).trim()).filter(Boolean);
+      base.displayText = removeRangesFromText(a, base.removedRanges);
+      return base;
+    }
+
+    base.safeToApply = similarity >= .58 || (aNorm.includes(bNorm) && bNorm.length / Math.max(1, aNorm.length) >= .45);
+    return base;
+  }
+
+  function normalizedCharMap(raw) {
+    const out = [];
+    let idx = 0;
+    for (const ch of String(raw || '')) {
+      const start = idx;
+      idx += ch.length;
+      const n = ch.toLowerCase().replace(/[\s\p{P}\p{S}]/gu, '');
+      if (n) out.push({ ch:n, start, end:idx });
+    }
+    return out;
+  }
+
+  function lcsIndexPairs(a, b) {
+    const m = a.length, n = b.length;
+    const dp = Array.from({length:m+1}, () => new Array(n+1).fill(0));
+    for (let i=m-1; i>=0; i--) {
+      for (let j=n-1; j>=0; j--) dp[i][j] = a[i] === b[j] ? dp[i+1][j+1] + 1 : Math.max(dp[i+1][j], dp[i][j+1]);
+    }
+    const pairs = [];
+    let i = 0, j = 0;
+    while (i < m && j < n) {
+      if (a[i] === b[j]) { pairs.push([i,j]); i++; j++; }
+      else if (dp[i+1][j] >= dp[i][j+1]) i++;
+      else j++;
+    }
+    return pairs;
+  }
+
+  function unmatchedARanges(aArr, matchedA) {
+    const ranges = [];
+    let cur = null;
+    for (let i=0; i<aArr.length; i++) {
+      if (!matchedA.has(i)) {
+        if (!cur) cur = {start:aArr[i].start, end:aArr[i].end};
+        else cur.end = aArr[i].end;
+      } else if (cur) { ranges.push(cur); cur = null; }
+    }
+    if (cur) ranges.push(cur);
+    return ranges;
+  }
+
+  function trimDeletionRange(text, range) {
+    if (!range) return null;
+    let start = range.start, end = range.end;
+    while (start < end && /[\s，,。．\.、；;：:！!？?「」『』（）()\[\]【】]/u.test(text[start])) start++;
+    while (end > start && /[\s，,。．\.、；;：:！!？?「」『』（）()\[\]【】]/u.test(text[end-1])) end--;
+    return end > start ? {start,end} : null;
+  }
+
+  function mergeDisplayRanges(ranges) {
+    const sorted = [...ranges].sort((a,b)=>a.start-b.start);
+    const out = [];
+    sorted.forEach(r => {
+      const last = out[out.length-1];
+      if (last && r.start <= last.end + 1) last.end = Math.max(last.end, r.end);
+      else out.push({...r});
+    });
+    return out;
+  }
+
+  function removeRangesFromText(text, ranges) {
+    if (!ranges?.length) return String(text || '');
+    let out = '', pos = 0;
+    ranges.forEach(r => { out += text.slice(pos, r.start); pos = r.end; });
+    out += text.slice(pos);
+    return cleanupDisplayAfterRemoval(out);
+  }
+
+  function cleanupDisplayAfterRemoval(text) {
+    return String(text || '')
+      .replace(/[、，,；;：:]\s*$/u, '')
+      .replace(/([、，,；;：:])\s*([。！？!?])/gu, '$2')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function scriptPlainTextForBrief(b) {
+    if ((b.removedRanges || []).length && b.aText) return b.aText;
+    return b.text || '';
+  }
+
+  function scriptHtmlForBrief(b) {
+    if ((b.removedRanges || []).length && b.aText) return markedTextHtml(b.aText, b.removedRanges);
+    return escapeHtml(b.text || '');
+  }
+
+  function markedTextHtml(text, ranges) {
+    const src = String(text || '');
+    const rs = mergeDisplayRanges(ranges || []);
+    let html = '', pos = 0;
+    rs.forEach(r => {
+      html += escapeHtml(src.slice(pos, r.start));
+      html += `<del>${escapeHtml(src.slice(r.start, r.end))}</del>`;
+      pos = r.end;
+    });
+    html += escapeHtml(src.slice(pos));
+    return html;
+  }
+
+  function markedTextRunsForPpt(b, C) {
+    const text = String((b.removedRanges || []).length && b.aText ? b.aText : (b.text || ''));
+    const rs = mergeDisplayRanges(b.removedRanges || []);
+    const runs = [{text:'「', options:{color:C.ink}}];
+    let pos = 0;
+    rs.forEach(r => {
+      if (r.start > pos) runs.push({text:text.slice(pos, r.start), options:{color:C.ink}});
+      runs.push({text:text.slice(r.start, r.end), options:{color:C.red, strike:true}});
+      pos = r.end;
+    });
+    if (pos < text.length) runs.push({text:text.slice(pos), options:{color:C.ink}});
+    runs.push({text:'」', options:{color:C.ink}});
+    return runs;
+  }
+
   function matchBBlocksToA(bBlocks, aCues, minScore=.52) {
     const candidates = [];
     const maxWindow = 12;
     bBlocks.forEach((bb, bi) => {
-      const bText = bb.text || bb.compareText || '';
+      const bText = bb.compareText || bb.text || '';
       const bNorm = norm(bText);
       const bLen = bNorm.length;
       if (!bLen) return;
@@ -565,11 +734,17 @@
         }, autoReq));
         return;
       }
-      const status = m.score < .68 ? 'uncertain' : (m.moved ? 'moved' : 'unchanged');
+      const analysis = analyzeAtoBText(m.aText, bb.compareText || bb.text);
+      let status = m.score < .68 && !analysis.isPartial ? 'uncertain' : (m.moved ? 'moved' : 'unchanged');
+      if (analysis.isPartial) status = m.moved ? 'moved_partial_removed' : 'partial_removed';
       output.push(makeEditorBlock({
         ...bb,
-        text:m.aText,
+        text:analysis.isPartial ? analysis.displayText : m.aText,
+        aText:m.aText,
         compareText:bb.compareText||bb.text,
+        removedParts:analysis.removedParts || [],
+        removedRanges:analysis.removedRanges || [],
+        partialConfidence:analysis.confidence || 0,
         startRaw:bb.startRaw,endRaw:bb.endRaw,
         oldStartRaw:m.oldStartRaw,oldEndRaw:m.oldEndRaw,
         newIndex:bi,oldIndex:m.aStart,status,similarity:m.score,
@@ -689,7 +864,9 @@
       id: uid(), status:data.status||'unchanged', similarity:data.similarity ?? 1,
       oldIndex:data.oldIndex ?? null, newIndex:data.newIndex ?? null,
       startRaw:data.startRaw||'', endRaw:data.endRaw||'', oldStartRaw:data.oldStartRaw||'', oldEndRaw:data.oldEndRaw||'',
-      type:data.type||'script', text:data.text||'', oldText:data.oldText||'', compareText:data.compareText||'', textSource:data.textSource||'A', timeSource:data.timeSource||'A', requirements:[], links:[], images:[], forceBreak:!!data.forceBreak, anchorTime:Number.isFinite(data.anchorTime)?data.anchorTime:null
+      type:data.type||'script', text:data.text||'', aText:data.aText||'', oldText:data.oldText||'', compareText:data.compareText||'', textSource:data.textSource||'A', timeSource:data.timeSource||'A',
+      removedParts:[...(data.removedParts||[])], removedRanges:[...(data.removedRanges||[])], partialConfidence:data.partialConfidence||0,
+      requirements:[], links:[], images:[], forceBreak:!!data.forceBreak, anchorTime:Number.isFinite(data.anchorTime)?data.anchorTime:null
     };
     if (autoReq) b.requirements.push(...autoRequirementsFor(b));
     return b;
@@ -707,6 +884,11 @@
     return `順序調換｜從 ${aSourceLabel(b)} 移至此處`;
   }
 
+  function partialRemoveRequirementText(b) {
+    const parts = (b.removedParts || []).map(x => `「${x}」`).join('、');
+    return parts ? `移除部分文字：${parts}` : '移除部分文字';
+  }
+
   function briefTimeLabelForPpt(b) {
     if (b.type === 'manual') return '自訂新增頁';
     if (b.status === 'added') return '新增片段｜A 原始字幕未找到對應';
@@ -719,6 +901,11 @@
     if (b.status === 'removed') return [{ id:uid(), cat:'移除', text:'移除此段', auto:true }];
     if (b.status === 'added') return [{ id:uid(), cat:'剪輯', text:'新增片段｜A 原始字幕未找到對應，請確認實際影片內容', auto:true }];
     if (b.status === 'moved') return [{ id:uid(), cat:'剪輯', text:movedRequirementText(b), auto:true }];
+    if (b.status === 'partial_removed') return [{ id:uid(), cat:'移除', text:partialRemoveRequirementText(b), auto:true }];
+    if (b.status === 'moved_partial_removed') return [
+      { id:uid(), cat:'剪輯', text:movedRequirementText(b), auto:true },
+      { id:uid(), cat:'移除', text:partialRemoveRequirementText(b), auto:true }
+    ];
     if (b.status === 'modified') return [{ id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整｜文字請以字幕 A 校正後版本為準', auto:true }];
     if (b.status === 'uncertain') return [{ id:uid(), cat:'剪輯', text:'此段與字幕 A 差異較大｜請確認實際影片內容', auto:true }];
     if (b.status === 'moved_modified') return [
@@ -776,7 +963,7 @@
   function renderSummary() {
     const counts = Object.fromEntries(Object.keys(STATUS_META).map(k=>[k,0]));
     state.blocks.forEach(b=>{ if(b.type!=='manual') counts[b.status]=(counts[b.status]||0)+1; });
-    const ordered = ['removed','added','moved','uncertain','unchanged'];
+    const ordered = ['removed','partial_removed','moved','moved_partial_removed','added','uncertain','unchanged'];
     els.summaryChips.innerHTML = ordered.map(k => `<div class="summary-chip"><strong>${counts[k]||0}</strong><span>${STATUS_META[k].label}</span></div>`).join('');
     els.filterRow.innerHTML = `<button class="filter-chip ${activeFilter==='all'?'active':''}" data-filter="all">全部</button>` + ordered.map(k=>`<button class="filter-chip ${activeFilter===k?'active':''}" data-filter="${k}">${STATUS_META[k].label}</button>`).join('');
     $$('.filter-chip', els.filterRow).forEach(btn=>btn.addEventListener('click',()=>{activeFilter=btn.dataset.filter;renderSummary();renderBlocks();}));
@@ -808,6 +995,7 @@
       if(b.oldIndex!=null)parts.push(`原始 A #${b.oldIndex+1}`);
       if(b.newIndex!=null)parts.push(`新版 B #${b.newIndex+1}`);
       if(b.similarity && b.status!=='unchanged' && b.type!=='manual')parts.push(`比對相似度 ${Math.round(b.similarity*100)}%`);
+      if((b.removedParts||[]).length)parts.push(`偵測移除 ${b.removedParts.length} 處文字`);
       if(b.textSource==='A' && b.timeSource==='B')parts.push('文字用 A · 時間用 B');
       $('.position-meta',node).textContent=b.type==='manual'?'手動插入的獨立頁面':parts.join(' · ');
       const timeRow=$('.time-row',node);
@@ -816,6 +1004,12 @@
       else if(b.timeSource==='B') timeRow.textContent=`新版 B｜${b.startRaw||'—'} → ${b.endRaw||'—'}`;
       else timeRow.textContent=`原始 A｜${b.startRaw||'—'} → ${b.endRaw||'—'}（新版已移除）`;
       const ta=$('.script-text',node); ta.value=b.text; ta.placeholder=b.type==='manual'?'輸入這一頁要補充的說明／需求標題…':'台詞'; if(b.status==='removed')ta.classList.add('deleted');
+      if((b.removedRanges||[]).length && b.aText){
+        const preview=document.createElement('div');
+        preview.className='partial-remove-preview';
+        preview.innerHTML=`<span>部分文字移除標示</span><div>「${scriptHtmlForBrief(b)}」</div>`;
+        ta.insertAdjacentElement('afterend', preview);
+      }
       ta.addEventListener('input',e=>{b.text=e.target.value;saveProject();updatePageEstimate();});
       if(b.compareText && b.textSource==='A' && norm(b.compareText)!==norm(b.text) && (b.status==='uncertain' || b.similarity < .90)){ const wrap=$('.compare-text-wrap',node);wrap.classList.remove('hidden');$('.compare-text',wrap).textContent=b.compareText; }
       const force=$('.force-break',node);force.checked=!!b.forceBreak;force.addEventListener('change',e=>{b.forceBreak=e.target.checked;saveProject();updatePageEstimate();});
@@ -968,7 +1162,7 @@
     const imgCount=(b.images||[]).length;
     const charsMain=imgCount?31:45;
     const charsReq=imgCount?43:61;
-    const mainLines=approxTextLines(b.text, charsMain);
+    const mainLines=approxTextLines(scriptPlainTextForBrief(b), charsMain);
     const reqLines=(b.requirements||[]).reduce((sum,r)=>sum+approxTextLines(r.text,charsReq),0);
     const linkLines=(b.links||[]).reduce((sum,l)=>sum+approxTextLines(l.label||'REF',charsReq),0);
     let h=.82 + mainLines*.34 + reqLines*.29 + linkLines*.25;
@@ -1016,7 +1210,7 @@
       else if(p.manual){const b=p.blocks[0];card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · 自訂新增頁</h4><div class="slide-block manual"><strong>自訂頁面</strong><span>${escapeHtml(b.text||'（尚未輸入說明）')}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`;}
       else{card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · P${i+1}</h4>`+p.blocks.map(b=>{
         const timeLabel=briefTimeLabelForPpt(b);
-        return `<div class="slide-block ${b.status==='removed'?'red':''}"><strong>${STATUS_META[b.status].label} · ${escapeHtml(timeLabel)}</strong><span>${escapeHtml(b.text)}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`;
+        return `<div class="slide-block ${b.status==='removed'?'red':''}"><strong>${STATUS_META[b.status].label} · ${escapeHtml(timeLabel)}</strong><span>「${scriptHtmlForBrief(b)}」${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`;
       }).join('');}
       els.slidePreview.appendChild(card);
     });
@@ -1057,22 +1251,24 @@
   function addPptTitle(sl,C,title){sl.addText('/ '+title,{x:.68,y:.38,w:10.65,h:.46,fontFace:'Noto Sans TC',fontSize:25,bold:true,color:C.blue,margin:0});}
   function addPptBlock(sl,pptx,C,b,x,y,w,h){
     const red=b.status==='removed';
+    const removeLike = red || b.status==='partial_removed' || b.status==='moved_partial_removed';
     sl.addShape(pptx.ShapeType.roundRect,{x,y,w,h,rectRadius:.05,fill:{color:'FFFFFF'},line:{color:C.line,width:.8}});
-    sl.addShape(pptx.ShapeType.rect,{x,y:y+.12,w:.055,h:Math.max(.22,h-.24),fill:{color:red?C.red:C.blue},line:{color:red?C.red:C.blue}});
+    sl.addShape(pptx.ShapeType.rect,{x,y:y+.12,w:.055,h:Math.max(.22,h-.24),fill:{color:removeLike?C.red:C.blue},line:{color:removeLike?C.red:C.blue}});
     const meta=STATUS_META[b.status]||STATUS_META.unchanged;
-    const statusColor=b.status==='removed'?C.red:b.status==='added'?C.green:b.status.includes('moved')?C.purple:b.status==='modified'?C.orange:'7C879E';
+    const statusColor=(b.status==='removed'||b.status==='partial_removed'||b.status==='moved_partial_removed')?C.red:b.status==='added'?C.green:b.status.includes('moved')?C.purple:b.status==='modified'?C.orange:'7C879E';
     sl.addShape(pptx.ShapeType.roundRect,{x:x+.20,y:y+.15,w:1.00,h:.32,rectRadius:.05,fill:{color:statusColor},line:{color:statusColor}});
     sl.addText(meta.label,{x:x+.20,y:y+.208,w:1.00,h:.18,fontFace:'Noto Sans TC',fontSize:9.8,bold:true,color:'FFFFFF',align:'center',margin:0});
     const primaryTime=briefTimeLabelForPpt(b);
     sl.addText(primaryTime,{x:x+1.34,y:y+.17,w:5.55,h:.25,fontFace:'Noto Sans TC',fontSize:13.1,bold:true,color:C.blue2,margin:0});
-    if(b.status==='moved'){sl.addText('由原位置移至此處',{x:x+6.98,y:y+.18,w:2.55,h:.22,fontFace:'Noto Sans TC',fontSize:11.8,bold:true,color:C.muted,margin:0});}
+    if(b.status==='moved'||b.status==='moved_partial_removed'){sl.addText('由原位置移至此處',{x:x+6.98,y:y+.18,w:2.55,h:.22,fontFace:'Noto Sans TC',fontSize:11.8,bold:true,color:C.muted,margin:0});}
     if(b._continuation){sl.addText('續頁',{x:x+w-1.06,y:y+.18,w:.72,h:.20,fontFace:'Noto Sans TC',fontSize:10.2,bold:true,color:C.muted,align:'right',margin:0});}
 
     const imgCount=(b.images||[]).length;
     const mainChars=imgCount?31:45;
-    const textLines=approxTextLines(b.text,mainChars);
+    const textLines=approxTextLines(scriptPlainTextForBrief(b),mainChars);
     const textH=Math.max(.40,textLines*.34);
-    sl.addText(`「${b.text}」`,{x:x+.24,y:y+.56,w:imgCount?7.18:9.78,h:textH,fontFace:'Noto Sans TC',fontSize:15.0,bold:true,color:red?C.red:C.ink,margin:0.02,strike:red,breakLine:false,valign:'top'});
+    const scriptRuns = red ? [{text:`「${b.text}」`,options:{color:C.red,strike:true}}] : markedTextRunsForPpt(b, C);
+    sl.addText(scriptRuns,{x:x+.24,y:y+.56,w:imgCount?7.18:9.78,h:textH,fontFace:'Noto Sans TC',fontSize:15.0,bold:true,color:red?C.red:C.ink,margin:0.02,breakLine:false,valign:'top'});
 
     let ry=y+.56+textH+.10; const rw=imgCount?7.16:9.72;
     (b.requirements||[]).forEach(r=>{

@@ -177,3 +177,12 @@ button{cursor:pointer}
 
 /* V1.7 delivery mode: hide decorative upload step numbers if older markup is imported */
 .step{display:none!important}
+
+/* V1.8 partial text removal */
+.status-partial_removed{background:#fde8e5;color:#b43b33}
+.status-moved_partial_removed{background:#fde8e5;color:#b43b33}
+.partial-remove-preview{margin-top:8px;padding:10px 12px;border-radius:10px;background:#fff5f3;border:1px solid #f1cfca;color:#753a35;font-size:14px;line-height:1.65}
+.partial-remove-preview>span{display:block;font-size:12px;font-weight:900;color:#b43b33;margin-bottom:4px}
+.partial-remove-preview del,.slide-block del{color:var(--red);text-decoration-thickness:2px;text-decoration-color:var(--red);font-weight:900}
+.segment-a-note.partial{background:#fff5f3;border-color:#f1cfca;color:#753a35}
+.segment-a-note.partial strong{color:#b43b33}
