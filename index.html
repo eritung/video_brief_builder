@@ -13,7 +13,7 @@
       <div class="mesh" aria-hidden="true"></div>
       <div class="hero-inner">
         <div>
-          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.3 PROTOTYPE</p>
+          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.4 PROTOTYPE</p>
           <h1>影音需求生成器</h1>
           <p class="hero-copy">以重剪版字幕 B 決定時間軸與分段，字幕 A 負責校正文字 → 比對移除／調換／疑似新增 → 補需求 → 依新版時間排序 → 匯出 PPTX。</p>
         </div>
@@ -111,11 +111,12 @@
           <div>
             <p class="eyebrow blue">STEP 03 · LINE REVIEW</p>
             <h2>先確認重剪版 B 的台詞分段</h2>
-            <p>這一步以重剪後字幕 B 為時間軸。系統會在高信心時先用字幕 A 校正錯字；按 Enter 直接拆成下一段，段首 Backspace 可合併上一段。</p>
-            <div class="keyboard-hint"><span><kbd>Enter</kbd> 拆段</span><span><kbd>Backspace</kbd> 段首合併</span><span><kbd>Shift</kbd> + <kbd>Enter</kbd> 段內換行</span><span><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> 另起一頁</span></div>
+            <p>這一步以重剪後字幕 B 為時間軸。系統會在高信心時先用字幕 A 校正錯字；按 Enter 可拆成下一段；中文輸入法選字時的 Enter 不會觸發拆段。若誤拆，可直接按「復原上一個分段」。</p>
+            <div class="keyboard-hint"><span><kbd>Enter</kbd> 拆段</span><span><kbd>Backspace</kbd> 段首合併</span><span><kbd>Shift</kbd> + <kbd>Enter</kbd> 段內換行</span><span><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> 另起一頁</span><span>中文選字 Enter 已保護</span></div>
           </div>
           <div class="review-head-actions">
             <span id="segmentationCount" class="review-count">0 段</span>
+            <button id="undoSegBtn" class="btn ghost" disabled>↶ 復原上一個分段</button>
             <button id="rebuildSegmentsBtn" class="btn ghost">依字幕 B 重新分段</button>
             <button id="confirmSegmentsBtn" class="btn primary">確認分段 → 比對 A</button>
           </div>
