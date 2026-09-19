@@ -4,8 +4,8 @@
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const STORAGE_KEY = 'videoBriefBuilderV12Project';
-  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV11Project'];
+  const STORAGE_KEY = 'videoBriefBuilderV13Project';
+  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
   const PRESET_KEY = 'videoBriefBuilderV1Presets';
 
   const STATUS_META = {
@@ -109,8 +109,9 @@
   }
 
   function newProject() {
-    return { version: 1.2, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
+    return { version: 1.3, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
   }
+
 
   function hydrateTopFields() {
     els.projectName.value = state.projectName || '影音需求';
@@ -120,7 +121,7 @@
     els.oldPaste.value = state.oldRaw || '';
     els.newPaste.value = state.newRaw || '';
     els.oldBadge.textContent = state.oldName || (state.oldRaw ? '已貼上字幕' : '尚未匯入');
-    els.newBadge.textContent = state.newName || (state.newRaw ? '已貼上字幕' : '選填');
+    els.newBadge.textContent = state.newName || (state.newRaw ? '已貼上字幕' : '必填');
     els.autoReq.checked = state.autoRequirements !== false;
   }
 
@@ -159,27 +160,32 @@
     state.mergeMode = els.mergeSelect.value;
     state.density = els.densitySelect.value;
     state.autoRequirements = els.autoReq.checked;
-    if (!state.oldRaw && !state.newRaw) return alert('請至少匯入或貼上一份字幕。');
+    if (!state.oldRaw) return alert('請先匯入影音夥伴提供的字幕 A，作為文字校正基準。');
+    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.3 會以 B 的時間軸、順序與分段作為簡報主結構。');
 
-    const oldCues = parseSubtitle(state.oldRaw || state.newRaw);
-    if (!oldCues.length) return alert('沒有讀到時間碼。請確認字幕格式是否包含起訖時間。');
-    // V1.2: 先只整理字幕 A，讓使用者確認每一段台詞的切法；確認後才比對 B 與產生需求頁面。
-    state.canonicalBlocks = mergeCues(oldCues, state.mergeMode).map((b,i)=>({ ...b, oldIndex:i, forceBreak:false }));
+    const oldCues = parseSubtitle(state.oldRaw);
+    const newCues = parseSubtitle(state.newRaw);
+    if (!oldCues.length) return alert('字幕 A 沒有讀到時間碼。請確認格式是否包含起訖時間。');
+    if (!newCues.length) return alert('字幕 B 沒有讀到時間碼。請確認格式是否包含起訖時間。');
+
+    // V1.3: B 決定最終時間軸、順序與分段；A 只負責校正文字與後續差異判斷。
+    const rawReviewBlocks = mergeCues(newCues, state.mergeMode).map((b,i)=>({
+      ...b, reviewIndex:i, forceBreak:false, compareText:b.text, textSource:'B', timeSource:'B', correctedFromA:false
+    }));
+    state.canonicalBlocks = seedReviewTextFromA(rawReviewBlocks, oldCues);
     state.blocks = [];
     state.stage = 'review';
     state.updatedAt = Date.now();
     saveProject();
-    renderSegmentationReview();
+    renderSegmentationReview({scrollToStart:true});
   }
 
+
   function confirmSegmentation() {
-    if (!state.canonicalBlocks?.length) return alert('請先整理字幕 A。');
-    const newCues = state.newRaw ? parseSubtitle(state.newRaw) : [];
-    if (state.newRaw && newCues.length) {
-      state.blocks = compareAgainstCanonicalA(state.canonicalBlocks, newCues, state.autoRequirements);
-    } else {
-      state.blocks = state.canonicalBlocks.map((b, i) => makeEditorBlock({ ...b, newIndex:i, oldIndex:i, status:'unchanged', similarity:1, textSource:'A', timeSource:'A' }, false));
-    }
+    if (!state.canonicalBlocks?.length) return alert('請先整理重剪版字幕 B。');
+    const oldCues = parseSubtitle(state.oldRaw || '');
+    if (!oldCues.length) return alert('字幕 A 無法讀取，請重新匯入後再比對。');
+    state.blocks = compareReviewedBToA(state.canonicalBlocks, oldCues, state.autoRequirements);
     state.blocks = sortBlocksChronologically(state.blocks);
     state.stage = 'edit';
     saveProject();
@@ -187,7 +193,8 @@
     requestAnimationFrame(()=>document.querySelector('#resultsSection')?.scrollIntoView({behavior:'smooth', block:'start'}));
   }
 
-  function renderSegmentationReview() {
+
+  function renderSegmentationReview(options={}) {
     els.results.classList.add('hidden');
     els.segmentationReview.classList.remove('hidden');
     els.segmentationList.innerHTML = '';
@@ -195,53 +202,105 @@
     state.canonicalBlocks.forEach((b, idx) => {
       const node = document.createElement('article');
       node.className = 'segment-item';
-      node.innerHTML = `<div class="segment-meta"><span class="segment-index">${idx+1}</span><span>${escapeHtml(b.startRaw)} → ${escapeHtml(b.endRaw)}</span></div>
+      node.dataset.segId = b.id;
+      const corrected = b.correctedFromA ? `<span class="source-pill">A 已校正</span>` : (b.aPreview ? `<span class="source-pill warn">A 低信心匹配</span>` : `<span class="source-pill neutral">B 轉錄</span>`);
+      node.innerHTML = `<div class="segment-meta"><span class="segment-index">${idx+1}</span><span>新版 B｜${escapeHtml(b.startRaw)} → ${escapeHtml(b.endRaw)}</span>${corrected}</div>
         <textarea class="segment-text" aria-label="第 ${idx+1} 段台詞">${escapeHtml(b.text)}</textarea>
+        ${b.aPreview && !b.correctedFromA ? `<div class="segment-a-note"><strong>A 可能對應：</strong>${escapeHtml(b.aPreview)} <span>${Math.round((b.aMatchScore||0)*100)}%</span></div>` : ''}
         <div class="segment-tools">
-          <div class="segment-tool-left"><button class="mini-tool seg-merge-prev">↑ 合併上一段</button><button class="mini-tool seg-merge-next">↓ 合併下一段</button><button class="mini-tool seg-split">↕ 從游標拆分</button></div>
+          <div class="segment-tool-left"><button class="mini-tool seg-merge-prev">↑ 合併上一段</button><button class="mini-tool seg-merge-next">↓ 合併下一段</button></div>
           <label class="break-toggle"><input type="checkbox" class="seg-force-break" ${b.forceBreak?'checked':''}> 這句另起一頁</label>
         </div>`;
       const ta = $('.segment-text', node);
-      ta.addEventListener('input', e => { b.text = e.target.value; saveProject(); });
+      ta.addEventListener('input', e => { b.text = e.target.value; b.manuallyEdited = true; saveProject(); });
+      ta.addEventListener('keydown', e => {
+        if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+          e.preventDefault();
+          b.forceBreak = !b.forceBreak;
+          $('.seg-force-break', node).checked = b.forceBreak;
+          saveProject();
+          return;
+        }
+        if (e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+          e.preventDefault();
+          splitCanonicalBlock(idx, ta.selectionStart);
+          return;
+        }
+        if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey && ta.selectionStart === 0 && ta.selectionEnd === 0 && idx > 0) {
+          e.preventDefault();
+          mergeCanonicalBlocks(idx-1, idx, {focusMerged:true, caretAtJoin:true});
+        }
+      });
       $('.seg-merge-prev', node).disabled = idx === 0;
       $('.seg-merge-next', node).disabled = idx === state.canonicalBlocks.length - 1;
-      $('.seg-merge-prev', node).addEventListener('click', () => mergeCanonicalBlocks(idx-1, idx));
-      $('.seg-merge-next', node).addEventListener('click', () => mergeCanonicalBlocks(idx, idx+1));
-      $('.seg-split', node).addEventListener('click', () => splitCanonicalBlock(idx, ta.selectionStart));
+      $('.seg-merge-prev', node).addEventListener('click', () => mergeCanonicalBlocks(idx-1, idx, {focusMerged:true}));
+      $('.seg-merge-next', node).addEventListener('click', () => mergeCanonicalBlocks(idx, idx+1, {focusMerged:true}));
       $('.seg-force-break', node).addEventListener('change', e => { b.forceBreak = e.target.checked; saveProject(); });
       els.segmentationList.appendChild(node);
     });
-    requestAnimationFrame(()=>els.segmentationReview.scrollIntoView({behavior:'smooth', block:'start'}));
+
+    requestAnimationFrame(()=>{
+      if (options.anchor?.id) {
+        const anchorEl = els.segmentationList.querySelector(`[data-seg-id="${cssEscape(options.anchor.id)}"]`);
+        if (anchorEl) window.scrollBy(0, anchorEl.getBoundingClientRect().top - options.anchor.top);
+      } else if (options.scrollToStart) {
+        els.segmentationReview.scrollIntoView({behavior:'smooth', block:'start'});
+      }
+      if (options.focusId) {
+        const focusNode = els.segmentationList.querySelector(`[data-seg-id="${cssEscape(options.focusId)}"]`);
+        const focusTa = focusNode?.querySelector('.segment-text');
+        if (focusTa) {
+          focusTa.focus({preventScroll:true});
+          const caret = Math.max(0, Math.min(Number.isFinite(options.caret) ? options.caret : focusTa.value.length, focusTa.value.length));
+          focusTa.setSelectionRange(caret, caret);
+        }
+      }
+    });
   }
 
-  function mergeCanonicalBlocks(leftIndex, rightIndex) {
+
+  function mergeCanonicalBlocks(leftIndex, rightIndex, options={}) {
     if (leftIndex < 0 || rightIndex >= state.canonicalBlocks.length || leftIndex >= rightIndex) return;
     const a = state.canonicalBlocks[leftIndex], b = state.canonicalBlocks[rightIndex];
+    const anchorEl = els.segmentationList.querySelector(`[data-seg-id="${cssEscape(a.id)}"]`);
+    const anchor = anchorEl ? {id:a.id, top:anchorEl.getBoundingClientRect().top} : null;
+    const joinPos = a.text.length;
     a.text = smartJoin(a.text, b.text);
+    a.compareText = smartJoin(a.compareText || '', b.compareText || '');
     a.end = b.end; a.endRaw = b.endRaw;
     a.sourceCueIds = [...(a.sourceCueIds||[]), ...(b.sourceCueIds||[])];
     a.forceBreak = a.forceBreak || b.forceBreak;
+    a.correctedFromA = a.correctedFromA && b.correctedFromA;
+    a.aPreview = '';
     state.canonicalBlocks.splice(rightIndex, 1);
-    state.canonicalBlocks.forEach((x,i)=>x.oldIndex=i);
-    saveProject(); renderSegmentationReview();
+    state.canonicalBlocks.forEach((x,i)=>x.reviewIndex=i);
+    saveProject();
+    renderSegmentationReview({anchor, focusId:options.focusMerged ? a.id : null, caret:options.caretAtJoin ? joinPos : a.text.length});
   }
+
 
   function splitCanonicalBlock(index, cursor) {
     const b = state.canonicalBlocks[index]; if (!b) return;
     const pos = Number(cursor);
-    if (!Number.isFinite(pos) || pos <= 0 || pos >= b.text.length) return alert('請先把文字游標放在想拆分的位置，再按「從游標拆分」。');
-    const left = b.text.slice(0,pos).trim(), right = b.text.slice(pos).trim();
+    if (!Number.isFinite(pos) || pos <= 0 || pos >= b.text.length) return;
+    const left = b.text.slice(0,pos).trimEnd(), right = b.text.slice(pos).trimStart();
     if (!left || !right) return;
+    const anchorEl = els.segmentationList.querySelector(`[data-seg-id="${cssEscape(b.id)}"]`);
+    const anchor = anchorEl ? {id:b.id, top:anchorEl.getBoundingClientRect().top} : null;
     const startSec=timeToSeconds(b.startRaw), endSec=timeToSeconds(b.endRaw);
-    const splitSec=startSec+(endSec-startSec)*(left.length/(left.length+right.length));
+    const ratio=Math.max(.08,Math.min(.92,left.length/Math.max(1,left.length+right.length)));
+    const splitSec=startSec+(endSec-startSec)*ratio;
     const mid=formatLikeTime(b.startRaw,splitSec);
     const originalEndRaw=b.endRaw, originalEnd=b.end;
-    b.text=left; b.endRaw=mid; b.end=splitSec;
-    const next={...clone(b), id:uid(), text:right, startRaw:mid, start:splitSec, endRaw:originalEndRaw, end:originalEnd, forceBreak:false};
+    const rawParts=splitApproxText(b.compareText || b.text, ratio);
+    b.text=left; b.compareText=rawParts[0]; b.endRaw=mid; b.end=splitSec; b.aPreview=''; b.manuallyEdited=true;
+    const next={...clone(b), id:uid(), text:right, compareText:rawParts[1], startRaw:mid, start:splitSec, endRaw:originalEndRaw, end:originalEnd, forceBreak:false, aPreview:'', manuallyEdited:true};
     state.canonicalBlocks.splice(index+1,0,next);
-    state.canonicalBlocks.forEach((x,i)=>x.oldIndex=i);
-    saveProject(); renderSegmentationReview();
+    state.canonicalBlocks.forEach((x,i)=>x.reviewIndex=i);
+    saveProject();
+    renderSegmentationReview({anchor, focusId:next.id, caret:0});
   }
+
 
   function parseSubtitle(raw) {
     const lines = raw.replace(/\r/g, '').split('\n');
@@ -314,147 +373,141 @@
     return a + (needsSpace ? ' ' : '') + b;
   }
 
-  function compareAgainstCanonicalA(oldBlocks, newCues, autoReq=true) {
-    // A 為 canonical：所有已匹配片段都顯示 A 的文字；B 只提供新版位置與「是否還存在」的訊號。
+  function seedReviewTextFromA(reviewBlocks, oldCues) {
+    const {matches} = matchBBlocksToA(reviewBlocks, oldCues, .50);
+    const byB = new Map(matches.map(m => [m.bi, m]));
+    return reviewBlocks.map((b, bi) => {
+      const m = byB.get(bi);
+      const out = {...b, compareText:b.compareText || b.text, aPreview:'', aMatchScore:m?.score || 0, correctedFromA:false};
+      // 只在高度可信時自動用 A 校正，避免 A/B 分段不同時把額外台詞硬塞進來。
+      if (m && m.score >= .84) {
+        out.text = m.aText;
+        out.correctedFromA = true;
+        out.aStartIndex = m.aStart;
+        out.aEndIndex = m.aEnd;
+      } else if (m && m.score >= .64) {
+        out.aPreview = m.aText;
+        out.aStartIndex = m.aStart;
+        out.aEndIndex = m.aEnd;
+      }
+      return out;
+    });
+  }
+
+  function matchBBlocksToA(bBlocks, aCues, minScore=.52) {
     const candidates = [];
-    const maxWindow = 10;
-
-    oldBlocks.forEach((ab, ai) => {
-      const aNorm = norm(ab.text);
-      const aLen = aNorm.length;
-      if (!aLen) return;
-      for (let start = 0; start < newCues.length; start++) {
-        let text = '';
-        for (let end = start; end < Math.min(newCues.length, start + maxWindow); end++) {
-          text = smartJoin(text, newCues[end].text);
-          const bNorm = norm(text);
-          const bLen = bNorm.length;
-          if (!bLen) continue;
-          if (bLen < Math.max(3, aLen * .30)) continue;
-          if (bLen > Math.max(aLen * 2.1, aLen + 28)) break;
-
-          let score = textSimilarity(ab.text, text);
-          const coverage = Math.min(aLen, bLen) / Math.max(1, Math.max(aLen, bLen));
-          if (aNorm === bNorm) score = 1;
-          else if ((aNorm.includes(bNorm) || bNorm.includes(aNorm)) && coverage >= .62) {
-            score = Math.max(score, .68 + coverage * .28);
-          }
-          if (score >= .56) {
-            candidates.push({
-              ai, start, end, score, coverage, text,
-              startRaw:newCues[start].startRaw, endRaw:newCues[end].endRaw,
-              startSec:newCues[start].start, endSec:newCues[end].end
-            });
-          }
+    const maxWindow = 12;
+    bBlocks.forEach((bb, bi) => {
+      const bText = bb.text || bb.compareText || '';
+      const bNorm = norm(bText);
+      const bLen = bNorm.length;
+      if (!bLen) return;
+      for (let aStart=0; aStart<aCues.length; aStart++) {
+        let aText = '';
+        for (let aEnd=aStart; aEnd<Math.min(aCues.length, aStart+maxWindow); aEnd++) {
+          aText = smartJoin(aText, aCues[aEnd].text);
+          const aNorm = norm(aText), aLen = aNorm.length;
+          if (!aLen) continue;
+          if (aLen < Math.max(2, bLen*.28)) continue;
+          if (aLen > Math.max(bLen*2.2, bLen+30)) break;
+          let score = textSimilarity(bText, aText);
+          const coverage = Math.min(aLen,bLen)/Math.max(1,Math.max(aLen,bLen));
+          if (aNorm===bNorm) score=1;
+          else if ((aNorm.includes(bNorm)||bNorm.includes(aNorm)) && coverage>=.58) score=Math.max(score,.66+coverage*.30);
+          if (score>=minScore) candidates.push({bi,aStart,aEnd,score,coverage,aText,oldStartRaw:aCues[aStart].startRaw,oldEndRaw:aCues[aEnd].endRaw});
         }
       }
     });
-
-    // 先取最可信的配對；同一段 B 不重複配給不同 A 區塊。
-    candidates.sort((x,y) => {
-      if (Math.abs(y.score - x.score) > .0001) return y.score - x.score;
-      if (Math.abs(y.coverage - x.coverage) > .0001) return y.coverage - x.coverage;
-      return (x.end-x.start) - (y.end-y.start);
+    candidates.sort((x,y)=>{
+      if (Math.abs(y.score-x.score)>.0001) return y.score-x.score;
+      if (Math.abs(y.coverage-x.coverage)>.0001) return y.coverage-x.coverage;
+      return (x.aEnd-x.aStart)-(y.aEnd-y.aStart);
     });
-    const usedA = new Set();
-    const usedB = new Set();
-    const selected = [];
+    const usedB=new Set(), usedA=new Set(), matches=[];
     for (const c of candidates) {
-      if (usedA.has(c.ai)) continue;
-      let overlaps = false;
-      for (let j=c.start;j<=c.end;j++) if (usedB.has(j)) { overlaps=true; break; }
-      if (overlaps) continue;
-      usedA.add(c.ai);
-      for (let j=c.start;j<=c.end;j++) usedB.add(j);
-      selected.push(c);
+      if (usedB.has(c.bi)) continue;
+      let overlap=false;
+      for (let ai=c.aStart;ai<=c.aEnd;ai++) if(usedA.has(ai)){overlap=true;break;}
+      if(overlap) continue;
+      usedB.add(c.bi);
+      for(let ai=c.aStart;ai<=c.aEnd;ai++) usedA.add(ai);
+      matches.push(c);
     }
+    return {matches,usedA};
+  }
 
-    // 依新版出現順序判斷哪些 A 區塊發生搬移。
-    const byNewOrder = [...selected].sort((a,b)=>a.start-b.start || a.end-b.end);
-    const lisPositions = new Set(longestIncreasingSubsequenceIndices(byNewOrder.map(m=>m.ai)));
-    byNewOrder.forEach((m,pos)=>{m.moved=!lisPositions.has(pos);m.newRank=pos;});
+  function compareReviewedBToA(reviewBlocks, oldCues, autoReq=true) {
+    const {matches,usedA} = matchBBlocksToA(reviewBlocks, oldCues, .52);
+    const byB = new Map(matches.map(m=>[m.bi,m]));
+    const matchedInBOrder = matches.slice().sort((a,b)=>a.bi-b.bi);
+    const lisPositions = new Set(longestIncreasingSubsequenceIndices(matchedInBOrder.map(m=>m.aStart)));
+    matchedInBOrder.forEach((m,pos)=>m.moved=!lisPositions.has(pos));
 
-    const timeline = [];
-    byNewOrder.forEach(m => {
-      const ab = oldBlocks[m.ai];
-      const status = m.score < .70 ? 'uncertain' : (m.moved ? 'moved' : 'unchanged');
-      timeline.push({
-        order:m.startSec,
-        block:makeEditorBlock({
-          ...ab,
-          text:ab.text,
-          compareText:m.text,
-          startRaw:m.startRaw,
-          endRaw:m.endRaw,
-          oldStartRaw:ab.startRaw,
-          oldEndRaw:ab.endRaw,
-          newIndex:m.newRank,
-          oldIndex:m.ai,
-          status,
-          similarity:m.score,
-          textSource:'A',
-          timeSource:'B'
-        }, autoReq)
-      });
-    });
-
-    // B 中完全沒有被 A 配對到的連續片段，只標成「疑似新增」，不視為可信主文。
-    let run = [];
-    const flushRun = () => {
-      if (!run.length) return;
-      const merged = mergeCues(run, 'standard');
-      merged.forEach(nb => {
-        timeline.push({
-          order:nb.start,
-          block:makeEditorBlock({
-            ...nb,
-            text:nb.text,
-            compareText:nb.text,
-            newIndex:null,
-            oldIndex:null,
-            status:'added',
-            similarity:0,
-            textSource:'B',
-            timeSource:'B'
-          }, autoReq)
-        });
-      });
-      run = [];
-    };
-    newCues.forEach((cue,i)=>{
-      if (usedB.has(i)) flushRun();
-      else run.push(cue);
-    });
-    flushRun();
-
-    timeline.sort((a,b)=>a.order-b.order);
-    // 重新給新版顯示序號，方便「舊版 # → 新版 #」說明。
-    let rank = 0;
-    timeline.forEach(item=>{
-      if (item.block.status !== 'removed') item.block.newIndex = rank++;
-      if (item.block.status === 'moved') {
-        const autoMove = item.block.requirements.find(r=>r.auto && r.text.startsWith('順序調換｜'));
-        if (autoMove) autoMove.text = `順序調換｜舊版 #${(item.block.oldIndex??0)+1} → 新版 #${(item.block.newIndex??0)+1}`;
-      }
-    });
-
-    const output = timeline.map(x=>x.block);
-    oldBlocks.forEach((ab, ai)=>{
-      if (!usedA.has(ai)) {
+    const output=[];
+    reviewBlocks.forEach((bb, bi)=>{
+      const m=byB.get(bi);
+      if(!m){
         output.push(makeEditorBlock({
-          ...ab,
-          text:ab.text,
-          compareText:'',
-          newIndex:null,
-          oldIndex:ai,
-          status:'removed',
-          similarity:0,
-          textSource:'A',
-          timeSource:'A'
+          ...bb, text:bb.text, compareText:bb.compareText||bb.text, newIndex:bi, oldIndex:null, status:'added', similarity:0,
+          textSource:'B', timeSource:'B', forceBreak:!!bb.forceBreak
         }, autoReq));
+        return;
+      }
+      const status = m.score < .68 ? 'uncertain' : (m.moved ? 'moved' : 'unchanged');
+      output.push(makeEditorBlock({
+        ...bb,
+        text:m.aText,
+        compareText:bb.compareText||bb.text,
+        startRaw:bb.startRaw,endRaw:bb.endRaw,
+        oldStartRaw:m.oldStartRaw,oldEndRaw:m.oldEndRaw,
+        newIndex:bi,oldIndex:m.aStart,status,similarity:m.score,
+        textSource:'A',timeSource:'B',forceBreak:!!bb.forceBreak,
+        aCueStart:m.aStart,aCueEnd:m.aEnd
+      }, autoReq));
+    });
+
+    // A 中沒有出現在 B 的 cue，合併成「原版移除」區塊，並錨定在新版時間軸的相鄰位置。
+    const runs=[]; let run=[]; let runStart=-1;
+    const flush=()=>{if(!run.length)return; runs.push({cues:run,start:runStart,end:runStart+run.length-1}); run=[];runStart=-1;};
+    oldCues.forEach((cue,ai)=>{
+      if(usedA.has(ai)) flush();
+      else { if(!run.length)runStart=ai; run.push(cue); }
+    });
+    flush();
+    const matchWithTimes = matches.map(m=>({
+      ...m,
+      bStart:timeToSeconds(reviewBlocks[m.bi]?.startRaw||''),
+      bEnd:timeToSeconds(reviewBlocks[m.bi]?.endRaw||reviewBlocks[m.bi]?.startRaw||'')
+    }));
+    runs.forEach(r=>{
+      const merged=mergeCues(r.cues,'standard');
+      let prev=null,next=null;
+      matchWithTimes.forEach(m=>{
+        if(m.aEnd<r.start && (!prev || m.aEnd>prev.aEnd)) prev=m;
+        if(m.aStart>r.end && (!next || m.aStart<next.aStart)) next=m;
+      });
+      let baseAnchor;
+      if(prev) baseAnchor=prev.bEnd+.0002;
+      else if(next) baseAnchor=Math.max(0,next.bStart-.0002);
+      else baseAnchor=Number.MAX_SAFE_INTEGER/1000;
+      merged.forEach((ab,j)=>{
+        output.push(makeEditorBlock({
+          ...ab,text:ab.text,compareText:'',newIndex:null,oldIndex:r.start+j,status:'removed',similarity:0,
+          textSource:'A',timeSource:'A',anchorTime:baseAnchor+j*.00001
+        }, autoReq));
+      });
+    });
+
+    const ordered = sortBlocksChronologically(output);
+    let newRank=0;
+    ordered.forEach(b=>{
+      if(b.timeSource==='B' && b.type!=='manual') b.newIndex=newRank++;
+      if(b.status==='moved'){
+        const autoMove=b.requirements.find(r=>r.auto&&r.text.startsWith('順序調換｜'));
+        if(autoMove) autoMove.text=`順序調換｜原始 A #${(b.oldIndex??0)+1} → 新版 B #${(b.newIndex??0)+1}`;
       }
     });
-    return output;
+    return ordered;
   }
 
   function compareBlocks(oldBlocks, newBlocks, autoReq=true) {
@@ -532,13 +585,13 @@
 
   function autoRequirementsFor(b) {
     if (b.status === 'removed') return [{ id:uid(), cat:'移除', text:'移除此段', auto:true }];
-    if (b.status === 'added') return [{ id:uid(), cat:'剪輯', text:'疑似新增片段｜請確認實際影片內容', auto:true }];
-    if (b.status === 'moved') return [{ id:uid(), cat:'剪輯', text:`順序調換｜舊版 #${(b.oldIndex??0)+1} → 新版 #${(b.newIndex??0)+1}`, auto:true }];
-    if (b.status === 'modified') return [{ id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整，請以新版台詞為準', auto:true }];
-    if (b.status === 'uncertain') return [{ id:uid(), cat:'剪輯', text:'新版轉錄與字幕 A 差異較大｜請確認實際影片內容', auto:true }];
+    if (b.status === 'added') return [{ id:uid(), cat:'剪輯', text:'新版 B 疑似新增片段｜請確認實際影片內容', auto:true }];
+    if (b.status === 'moved') return [{ id:uid(), cat:'剪輯', text:`順序調換｜原始 A #${(b.oldIndex??0)+1} → 新版 B #${(b.newIndex??0)+1}`, auto:true }];
+    if (b.status === 'modified') return [{ id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整｜文字請以字幕 A 校正後版本為準', auto:true }];
+    if (b.status === 'uncertain') return [{ id:uid(), cat:'剪輯', text:'新版 B 轉錄與字幕 A 差異較大｜請確認實際影片內容', auto:true }];
     if (b.status === 'moved_modified') return [
-      { id:uid(), cat:'剪輯', text:`順序調換｜舊版 #${(b.oldIndex??0)+1} → 新版 #${(b.newIndex??0)+1}`, auto:true },
-      { id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整，請以新版台詞為準', auto:true }
+      { id:uid(), cat:'剪輯', text:`順序調換｜原始 A #${(b.oldIndex??0)+1} → 新版 B #${(b.newIndex??0)+1}`, auto:true },
+      { id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整｜文字請以字幕 A 校正後版本為準', auto:true }
     ];
     return [];
   }
@@ -555,13 +608,15 @@
   function longestIncreasingSubsequenceIndices(arr){ const tails=[],tailsIdx=[],prev=new Array(arr.length).fill(-1); for(let i=0;i<arr.length;i++){let l=0,r=tails.length;while(l<r){const mid=(l+r)>>1;if(tails[mid]<arr[i])l=mid+1;else r=mid;} if(l>0)prev[i]=tailsIdx[l-1]; tails[l]=arr[i]; tailsIdx[l]=i;} const out=[]; let k=tailsIdx[tails.length-1]; while(k!=null&&k>=0){out.push(k);k=prev[k];} return out.reverse(); }
 
   function canonicalSortKey(b) {
-    if (b.type === 'manual') return Number.isFinite(b.anchorTime) ? b.anchorTime : Number.MAX_SAFE_INTEGER - 10;
-    const canonicalRaw = b.oldStartRaw || (b.timeSource === 'A' ? b.startRaw : '');
-    if (canonicalRaw) return timeToSeconds(canonicalRaw);
-    if (b.oldIndex != null) return b.oldIndex * 1000;
-    // B-only 疑似新增無可靠 A 時間，排在既有 A 時間軸後方，避免打亂正式字幕順序。
-    return Number.MAX_SAFE_INTEGER - 100000 + timeToSeconds(b.startRaw || '');
+    if (Number.isFinite(b.anchorTime)) return b.anchorTime;
+    if (b.type === 'manual') return Number.MAX_SAFE_INTEGER - 10;
+    if (b.timeSource === 'B' && b.startRaw) return timeToSeconds(b.startRaw);
+    if (b.newIndex != null) return b.newIndex * 1000;
+    // 原版被移除片段沒有 B 時間；若沒有 anchorTime 才退回 A 時間並排在後方。
+    if (b.startRaw) return Number.MAX_SAFE_INTEGER - 100000 + timeToSeconds(b.startRaw);
+    return Number.MAX_SAFE_INTEGER - 1;
   }
+
 
   function sortBlocksChronologically(blocks) {
     return [...(blocks||[])].map((b,i)=>({b,i,k:canonicalSortKey(b)})).sort((x,y)=>x.k-y.k || x.i-y.i).map(x=>x.b);
@@ -569,14 +624,15 @@
 
   function insertManualPage(afterIndex) {
     const after = state.blocks[afterIndex];
-    let anchor = after ? canonicalSortKey(after) + 0.0001 : 0;
-    if (!after && state.blocks.length) anchor = canonicalSortKey(state.blocks[state.blocks.length-1]) + 0.0001;
+    let anchor = after ? canonicalSortKey(after) + 0.00005 : 0;
+    if (!after && state.blocks.length) anchor = canonicalSortKey(state.blocks[state.blocks.length-1]) + 0.00005;
     const b = makeEditorBlock({type:'manual', status:'manual', text:'', textSource:'A', timeSource:'manual', forceBreak:true, anchorTime:anchor}, false);
     b.requirements.push({id:uid(), cat:'其他', text:'新增頁面需求'});
     state.blocks.splice(Math.max(0, afterIndex+1), 0, b);
     state.blocks = sortBlocksChronologically(state.blocks);
     saveProject(); renderAll();
   }
+
 
   function renderAll() {
     state.stage = 'edit';
@@ -616,12 +672,17 @@
       const node=$('#blockTemplate').content.firstElementChild.cloneNode(true);
       const meta=STATUS_META[b.status]||STATUS_META.unchanged;
       const pill=$('.status-pill',node); pill.textContent=meta.label; pill.className=`status-pill ${meta.cls}`;
-      const parts=[]; if(b.oldIndex!=null)parts.push(`字幕 A #${b.oldIndex+1}`); if(b.newIndex!=null)parts.push(`新版位置 #${b.newIndex+1}`); if(b.similarity && b.status!=='unchanged' && b.type!=='manual')parts.push(`比對相似度 ${Math.round(b.similarity*100)}%`); if(b.textSource==='A' && b.type!=='manual')parts.push('文字以 A 為準');
+      const parts=[];
+      if(b.oldIndex!=null)parts.push(`原始 A #${b.oldIndex+1}`);
+      if(b.newIndex!=null)parts.push(`新版 B #${b.newIndex+1}`);
+      if(b.similarity && b.status!=='unchanged' && b.type!=='manual')parts.push(`比對相似度 ${Math.round(b.similarity*100)}%`);
+      if(b.textSource==='A' && b.timeSource==='B')parts.push('文字用 A · 時間用 B');
       $('.position-meta',node).textContent=b.type==='manual'?'手動插入的獨立頁面':parts.join(' · ');
       const timeRow=$('.time-row',node);
-      if(b.type==='manual'){ timeRow.textContent='獨立新增頁｜不綁時間碼'; }
-      else if(b.timeSource==='B' && b.oldStartRaw){ timeRow.textContent=`字幕 A｜${b.oldStartRaw} → ${b.oldEndRaw||'—'}　／　新版 B｜${b.startRaw||'—'} → ${b.endRaw||'—'}`; }
-      else { timeRow.textContent=`字幕 A｜${b.startRaw||'—'} → ${b.endRaw||'—'}`; }
+      if(b.type==='manual') timeRow.textContent='獨立新增頁｜不綁時間碼';
+      else if(b.timeSource==='B' && b.oldStartRaw) timeRow.textContent=`新版 B｜${b.startRaw||'—'} → ${b.endRaw||'—'}　／　原始 A｜${b.oldStartRaw} → ${b.oldEndRaw||'—'}`;
+      else if(b.timeSource==='B') timeRow.textContent=`新版 B｜${b.startRaw||'—'} → ${b.endRaw||'—'}`;
+      else timeRow.textContent=`原始 A｜${b.startRaw||'—'} → ${b.endRaw||'—'}（新版已移除）`;
       const ta=$('.script-text',node); ta.value=b.text; ta.placeholder=b.type==='manual'?'輸入這一頁要補充的說明／需求標題…':'台詞'; if(b.status==='removed')ta.classList.add('deleted');
       ta.addEventListener('input',e=>{b.text=e.target.value;saveProject();updatePageEstimate();});
       if(b.compareText && b.textSource==='A' && norm(b.compareText)!==norm(b.text) && (b.status==='uncertain' || b.similarity < .90)){ const wrap=$('.compare-text-wrap',node);wrap.classList.remove('hidden');$('.compare-text',wrap).textContent=b.compareText; }
@@ -646,6 +707,7 @@
     });
     updatePageEstimate();
   }
+
 
   function mergeEditorBlocks(leftIndex, rightIndex) {
     if (leftIndex < 0 || rightIndex >= state.blocks.length || leftIndex >= rightIndex) return;
@@ -719,7 +781,20 @@
   function updatePageEstimate(){if(!state.blocks.length){els.pageEstimate.textContent='尚未計算';return;}const pages=getPages();els.pageEstimate.innerHTML=`預估 <strong>${pages.length}</strong> 頁<br><span style="font-weight:400;color:#6f7a95">依「${state.density==='compact'?'緊湊':state.density==='relaxed'?'舒適':'標準'}」密度自動分頁</span>`;}
 
   function openPreviewModal(){renderSlidePreview();els.previewModal.classList.remove('hidden');}
-  function renderSlidePreview(){const pages=getPages();els.slidePreview.innerHTML='';pages.forEach((p,i)=>{const card=document.createElement('div');card.className='slide-card';if(p.global){card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)}</h4><div class="slide-block"><strong>整支影片需求</strong><span>${state.globalRequirements.filter(Boolean).map(escapeHtml).join('／')}</span></div>`;}else if(p.manual){const b=p.blocks[0];card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · 自訂新增頁</h4><div class="slide-block manual"><strong>自訂頁面</strong><span>${escapeHtml(b.text||'（尚未輸入說明）')}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`;}else{card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · P${i+1}</h4>`+p.blocks.map(b=>`<div class="slide-block ${b.status==='removed'?'red':''}"><strong>${STATUS_META[b.status].label} · ${escapeHtml(b.oldStartRaw||b.startRaw)}–${escapeHtml(b.oldEndRaw||b.endRaw)}</strong><span>${escapeHtml(b.text)}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`).join('');}els.slidePreview.appendChild(card);});}
+  function renderSlidePreview(){
+    const pages=getPages();els.slidePreview.innerHTML='';
+    pages.forEach((p,i)=>{
+      const card=document.createElement('div');card.className='slide-card';
+      if(p.global){card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)}</h4><div class="slide-block"><strong>整支影片需求</strong><span>${state.globalRequirements.filter(Boolean).map(escapeHtml).join('／')}</span></div>`;}
+      else if(p.manual){const b=p.blocks[0];card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · 自訂新增頁</h4><div class="slide-block manual"><strong>自訂頁面</strong><span>${escapeHtml(b.text||'（尚未輸入說明）')}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`;}
+      else{card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · P${i+1}</h4>`+p.blocks.map(b=>{
+        const timeLabel=b.timeSource==='B'?`B ${b.startRaw}–${b.endRaw}`:`A ${b.startRaw}–${b.endRaw}（移除）`;
+        return `<div class="slide-block ${b.status==='removed'?'red':''}"><strong>${STATUS_META[b.status].label} · ${escapeHtml(timeLabel)}</strong><span>${escapeHtml(b.text)}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`;
+      }).join('');}
+      els.slidePreview.appendChild(card);
+    });
+  }
+
 
   async function exportPptx(){
     if(!state.blocks.length)return alert('請先解析字幕。');
@@ -757,7 +832,9 @@
     const red=b.status==='removed';sl.addShape(pptx.ShapeType.roundRect,{x,y,w,h,rectRadius:.05,fill:{color:'FFFFFF'},line:{color:C.line,width:.8}});sl.addShape(pptx.ShapeType.rect,{x,y:y+.14,w:.055,h:Math.max(.22,h-.28),fill:{color:red?C.red:C.blue},line:{color:red?C.red:C.blue}});
     const meta=STATUS_META[b.status]||STATUS_META.unchanged; const statusColor=b.status==='removed'?C.red:b.status==='added'?C.green:b.status.includes('moved')?C.purple:b.status==='modified'?C.orange:'7C879E';
     sl.addShape(pptx.ShapeType.roundRect,{x:x+.2,y:y+.16,w:.88,h:.25,rectRadius:.05,fill:{color:statusColor},line:{color:statusColor}});sl.addText(meta.label,{x:x+.2,y:y+.215,w:.88,h:.1,fontFace:'Noto Sans TC',fontSize:6.2,bold:true,color:'FFFFFF',align:'center',margin:0});
-    sl.addText(`${b.oldStartRaw||b.startRaw} → ${b.oldEndRaw||b.endRaw}`,{x:x+1.22,y:y+.2,w:2.55,h:.13,fontFace:'Noto Sans TC',fontSize:7.2,bold:true,color:C.blue2,margin:0});
+    const primaryTime=b.timeSource==='B'?`B  ${b.startRaw||'—'} → ${b.endRaw||'—'}`:`A  ${b.startRaw||'—'} → ${b.endRaw||'—'}（移除）`;
+    sl.addText(primaryTime,{x:x+1.22,y:y+.19,w:3.4,h:.14,fontFace:'Noto Sans TC',fontSize:7.2,bold:true,color:C.blue2,margin:0});
+    if(b.timeSource==='B'&&b.oldStartRaw){sl.addText(`A ${b.oldStartRaw} → ${b.oldEndRaw||'—'}`,{x:x+4.7,y:y+.2,w:2.6,h:.13,fontFace:'Noto Sans TC',fontSize:6.6,color:C.muted,margin:0});}
     const reqCount=b.requirements.length, linkCount=b.links.length, imgCount=b.images.length; const textH=Math.max(.27,Math.min(.62,h*.32));
     sl.addText(`「${b.text}」`,{x:x+.22,y:y+.5,w:imgCount?7.2:9.8,h:textH,fontFace:'Noto Sans TC',fontSize:h<1.15?9.2:10.4,bold:true,color:red?C.red:C.ink,margin:0.03,breakLine:false,strike:red});
     let ry=y+.5+textH+.08; const rw=imgCount?7.25:9.85; const lineH=.22;
@@ -766,8 +843,19 @@
     if(imgCount){const imgs=b.images.slice(0,2);const ix=x+7.72,iw=2.36,ih=Math.min(h-.35,1.5);imgs.forEach((im,j)=>{try{sl.addImage({data:im.data,x:ix,y:y+.45+j*(ih+.08),w:iw,h:ih});}catch(_){}});}
     if(reqCount>6||linkCount>3)sl.addText(`＋${Math.max(0,reqCount-6)+Math.max(0,linkCount-3)} 項未展開`,{x:x+w-1.6,y:y+h-.22,w:1.25,h:.12,fontFace:'Noto Sans TC',fontSize:6.2,color:C.muted,align:'right',margin:0});
   }
+
   function addMesh(sl,pptx,C){for(let i=0;i<18;i++){const y=1.0+i*.28;sl.addShape(pptx.ShapeType.arc,{x:6.1,y:y-1.1,w:7.8,h:2.35,adjustPoint:.25,rotate:8,line:{color:i%2?'5F83FF':'70D5FF',transparency:74,width:.7},fill:{color:C.navy2,transparency:100}});} }
   function addEdgeMesh(sl,pptx,C){sl.addShape(pptx.ShapeType.rect,{x:11.55,y:0,w:1.78,h:7.5,fill:{color:C.navy},line:{color:C.navy}});for(let i=0;i<14;i++){sl.addShape(pptx.ShapeType.arc,{x:11.25,y:.1+i*.48,w:2.35,h:1.25,rotate:15,line:{color:i%2?'5F83FF':'70D5FF',transparency:64,width:.7},fill:{color:C.navy,transparency:100}});}}
+
+  function splitApproxText(text, ratio) {
+    const src=String(text||''); if(!src)return ['',''];
+    const pos=Math.max(1,Math.min(src.length-1,Math.round(src.length*ratio)));
+    return [src.slice(0,pos).trimEnd(),src.slice(pos).trimStart()];
+  }
+  function cssEscape(value){
+    if(window.CSS&&typeof window.CSS.escape==='function')return window.CSS.escape(String(value));
+    return String(value).replace(/(["\\])/g,'\\$1');
+  }
 
   function openPresetModal(){renderPresetEditor();els.presetModal.classList.remove('hidden');}
   function renderPresetEditor(){els.presetEditor.innerHTML='';presets.forEach((p,i)=>{const row=document.createElement('div');row.className='preset-row';row.innerHTML=`<select class="pcat">${['畫面','字幕','素材','音效','剪輯','移除','動畫','其他'].map(c=>`<option ${c===p.cat?'selected':''}>${c}</option>`).join('')}</select><input class="plabel" value="${escapeAttr(p.label)}"><input class="ptext" value="${escapeAttr(p.text)}"><button>×</button>`;$('.pcat',row).addEventListener('change',e=>p.cat=e.target.value);$('.plabel',row).addEventListener('input',e=>p.label=e.target.value);$('.ptext',row).addEventListener('input',e=>p.text=e.target.value);$('button',row).addEventListener('click',()=>{presets.splice(i,1);renderPresetEditor();});els.presetEditor.appendChild(row);});}
@@ -777,7 +865,21 @@
   function closeModal(id){$('#'+id)?.classList.add('hidden');}
 
   function exportProject(){syncProjectMeta();state.oldRaw=els.oldPaste.value;state.newRaw=els.newPaste.value;const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});downloadBlob(blob,`${safeName(state.projectName)}_${state.versionName||''}_project.json`);}
-  function importProject(e){const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{try{state=JSON.parse(reader.result);hydrateTopFields();if(state.stage==='review'&&state.canonicalBlocks?.length)renderSegmentationReview();else renderAll();saveProject();}catch(_){alert('專案 JSON 格式無法讀取。');}};reader.readAsText(file);e.target.value='';}
+  function importProject(e){
+    const file=e.target.files?.[0];if(!file)return;
+    const reader=new FileReader();
+    reader.onload=()=>{
+      try{
+        state=migrateProject(JSON.parse(reader.result));
+        hydrateTopFields();
+        if(state.stage==='review'&&state.canonicalBlocks?.length)renderSegmentationReview();
+        else if(state.blocks?.length)renderAll();
+        else { els.results.classList.add('hidden'); els.segmentationReview.classList.add('hidden'); }
+        saveProject();
+      }catch(_){alert('專案 JSON 格式無法讀取。');}
+    };
+    reader.readAsText(file);e.target.value='';
+  }
   function loadDemo(){
     const old=`00:00:00:00 - 00:00:03:00\n今天先介紹第一個重點\n\n00:00:03:00 - 00:00:06:00\n這一段我們之後會移除\n\n00:00:06:00 - 00:00:09:00\n接著談第二個重點\n\n00:00:09:00 - 00:00:12:00\n最後補充第三個重點`;
     const newer=`00:00:00:00 - 00:00:03:00\n今天先介紹第一個重點\n\n00:00:03:00 - 00:00:06:00\n最後補充第三個重點\n\n00:00:06:00 - 00:00:09:00\n接著談第二個重要觀念\n\n00:00:09:00 - 00:00:12:00\n這是重剪後新增的一句話`;
@@ -786,7 +888,14 @@
   function clearProject(){if(!confirm('確定要清空目前專案嗎？'))return;state=newProject();localStorage.removeItem(STORAGE_KEY);hydrateTopFields();els.blocks.innerHTML='';els.results.classList.add('hidden');els.segmentationReview.classList.add('hidden');activeFilter='all';}
 
   function saveProject(){state.updatedAt=Date.now();try{const raw=JSON.stringify(state);if(raw.length<4_500_000)localStorage.setItem(STORAGE_KEY,raw);else{const light=clone(state);light.blocks?.forEach(b=>b.images=[]);localStorage.setItem(STORAGE_KEY,JSON.stringify(light));}}catch(e){console.warn('autosave skipped',e);}}
-  function loadProject(){try{let raw=localStorage.getItem(STORAGE_KEY);if(!raw){for(const key of LEGACY_STORAGE_KEYS){raw=localStorage.getItem(key);if(raw)break;}}return raw?JSON.parse(raw):null;}catch(_){return null;}}
+  function migrateProject(project){
+    if(!project||typeof project!=='object')return null;
+    if(Number(project.version||0)<1.3){
+      return {...project,version:1.3,canonicalBlocks:[],blocks:[],stage:'upload'};
+    }
+    return project;
+  }
+  function loadProject(){try{let raw=localStorage.getItem(STORAGE_KEY);if(!raw){for(const key of LEGACY_STORAGE_KEYS){raw=localStorage.getItem(key);if(raw)break;}}return raw?migrateProject(JSON.parse(raw)):null;}catch(_){return null;}}
 
   function fileToDataURL(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});}
   function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>影音需求生成器｜Video Brief Builder</title>
-  <meta name="description" content="以影音字幕 A 為文字基準，比對重剪版字幕 B 的刪除、調換與疑似新增，再補影音需求並匯出 PPTX。" />
+  <meta name="description" content="以重剪版字幕 B 決定時間軸與分段，字幕 A 校正文字與判斷刪除／調換，再補影音需求並匯出 PPTX。" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,9 +13,9 @@
       <div class="mesh" aria-hidden="true"></div>
       <div class="hero-inner">
         <div>
-          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.2 PROTOTYPE</p>
+          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.3 PROTOTYPE</p>
           <h1>影音需求生成器</h1>
-          <p class="hero-copy">先確認字幕 A 的台詞分段 → 比對重剪版的移除／調換／疑似新增 → 補需求 → 依時間排序 → 匯出 PPTX。</p>
+          <p class="hero-copy">以重剪版字幕 B 決定時間軸與分段，字幕 A 負責校正文字 → 比對移除／調換／疑似新增 → 補需求 → 依新版時間排序 → 匯出 PPTX。</p>
         </div>
         <div class="hero-actions">
           <button class="btn ghost light" id="loadDemoBtn">載入示範</button>
@@ -47,11 +47,11 @@
           </select>
         </div>
         <div class="field compact merge-field">
-          <label for="mergeSelect">台詞分段</label>
+          <label for="mergeSelect">B 台詞分段</label>
           <select id="mergeSelect">
-            <option value="original">依字幕 A 原始段落</option>
-            <option value="standard" selected>依字幕 A 自然句（推薦）</option>
-            <option value="long">依字幕 A 合併長句</option>
+            <option value="original">依字幕 B 原始段落</option>
+            <option value="standard" selected>依字幕 B 自然句（推薦）</option>
+            <option value="long">依字幕 B 合併長句</option>
           </select>
         </div>
       </section>
@@ -79,9 +79,9 @@
           <div class="upload-card-head">
             <div>
               <h2>重剪版本轉錄字幕 B</h2>
-              <p>只用來判斷片段位置與差異；不會覆蓋字幕 A 文字</p>
+              <p>最終影片的時間軸、順序與分段基準</p>
             </div>
-            <span class="file-badge" id="newFileBadge">選填</span>
+            <span class="file-badge" id="newFileBadge">必填</span>
           </div>
           <label class="drop-button" for="newSubtitleInput">
             <strong>選擇字幕檔</strong>
@@ -95,13 +95,13 @@
       <section class="compare-rule card">
         <div class="rule-icon">A</div>
         <div>
-          <strong>比對原則：字幕 A 是文字與分段基準</strong>
-          <p>字幕 B 只用來判斷「哪些片段還在、被移除、被調換或疑似新增」。小幅轉錄錯字不會直接改寫字幕 A。</p>
+          <strong>新版結構看 B，文字正確性看 A</strong>
+          <p>字幕 B 決定最終影片的時間、順序與分段；字幕 A 用來校正 B 的轉錄錯字，並判斷哪些原始片段被移除或調換。</p>
         </div>
       </section>
 
       <section class="action-row">
-        <button id="analyzeBtn" class="btn primary big">整理字幕 A／檢查分段</button>
+        <button id="analyzeBtn" class="btn primary big">整理字幕 B／檢查分段</button>
         <button id="clearBtn" class="btn ghost big">清空</button>
         <span class="privacy-note">所有字幕與需求都在瀏覽器本機處理，不會上傳到伺服器。</span>
       </section>
@@ -110,18 +110,19 @@
         <div class="review-head card">
           <div>
             <p class="eyebrow blue">STEP 03 · LINE REVIEW</p>
-            <h2>先確認台詞分段</h2>
-            <p>這一步只看影音提供的字幕 A。可先合併、拆分或直接修改每一段，再進入差異比對與需求編輯；後續簡報會以字幕 A 的時間順序排列。</p>
+            <h2>先確認重剪版 B 的台詞分段</h2>
+            <p>這一步以重剪後字幕 B 為時間軸。系統會在高信心時先用字幕 A 校正錯字；按 Enter 直接拆成下一段，段首 Backspace 可合併上一段。</p>
+            <div class="keyboard-hint"><span><kbd>Enter</kbd> 拆段</span><span><kbd>Backspace</kbd> 段首合併</span><span><kbd>Shift</kbd> + <kbd>Enter</kbd> 段內換行</span><span><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> 另起一頁</span></div>
           </div>
           <div class="review-head-actions">
             <span id="segmentationCount" class="review-count">0 段</span>
-            <button id="rebuildSegmentsBtn" class="btn ghost">依目前分段模式重整</button>
-            <button id="confirmSegmentsBtn" class="btn primary">確認分段 → 比對 B</button>
+            <button id="rebuildSegmentsBtn" class="btn ghost">依字幕 B 重新分段</button>
+            <button id="confirmSegmentsBtn" class="btn primary">確認分段 → 比對 A</button>
           </div>
         </div>
         <div id="segmentationList" class="segmentation-list"></div>
         <div class="review-bottom card">
-          <span>確認後仍可在需求編輯階段繼續拆句／合併；這裡只是先把大部分分段整理好。</span>
+          <span>建議先在這裡把 B 的斷句整理好；後面的需求頁會直接沿用這個新版時間軸。</span>
           <button class="btn primary" onclick="document.getElementById('confirmSegmentsBtn').click()">確認分段並進入需求編輯</button>
         </div>
       </section>
@@ -159,7 +160,7 @@
           </aside>
 
           <div class="blocks-wrap">
-            <div class="blocks-toolbar"><div><strong>需求頁面</strong><span>依字幕 A 時間順序排列；「另起一頁」與手動新增頁會保留。</span></div><button id="insertPageEndBtn" class="btn ghost">＋ 插入新頁</button></div>
+            <div class="blocks-toolbar"><div><strong>需求頁面</strong><span>依新版字幕 B 的時間順序排列；A 只負責校正文字。「另起一頁」與手動新增頁會保留。</span></div><button id="insertPageEndBtn" class="btn ghost">＋ 插入新頁</button></div>
             <div id="blocksContainer" class="blocks"></div>
           </div>
         </div>
