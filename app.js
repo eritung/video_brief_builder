@@ -4,13 +4,13 @@
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const STORAGE_KEY = 'videoBriefBuilderV1Project';
+  const STORAGE_KEY = 'videoBriefBuilderV11Project';
   const PRESET_KEY = 'videoBriefBuilderV1Presets';
 
   const STATUS_META = {
     unchanged: { label: '未變更', cls: 'status-unchanged' },
     removed: { label: '移除', cls: 'status-removed' },
-    added: { label: '新增', cls: 'status-added' },
+    added: { label: '疑似新增', cls: 'status-added' },
     moved: { label: '順序調換', cls: 'status-moved' },
     modified: { label: '文字修改', cls: 'status-modified' },
     moved_modified: { label: '調換＋文字修改', cls: 'status-moved_modified' },
@@ -71,7 +71,9 @@
     bindDropZone($('#oldDropZone'), 'old');
     bindDropZone($('#newDropZone'), 'new');
     bindEvents();
-    if (state.blocks?.length) renderAll();
+    const demoMode = new URLSearchParams(location.search).get('demo') === '1';
+    if (demoMode && !state.blocks?.length) loadDemo();
+    else if (state.blocks?.length) renderAll();
   }
 
   function bindEvents() {
@@ -80,6 +82,7 @@
     $('#presetBtn').addEventListener('click', openPresetModal);
     $('#previewBtn').addEventListener('click', openPreviewModal);
     $('#exportPptxBtn').addEventListener('click', exportPptx);
+    $('#exportPptxTopBtn').addEventListener('click', exportPptx);
     $('#exportProjectBtn').addEventListener('click', exportProject);
     $('#importProjectBtn').addEventListener('click', () => els.projectFileInput.click());
     $('#loadDemoBtn').addEventListener('click', loadDemo);
@@ -99,7 +102,7 @@
   }
 
   function newProject() {
-    return { version: 1, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', blocks: [], globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
+    return { version: 1.1, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', blocks: [], globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
   }
 
   function hydrateTopFields() {
@@ -154,13 +157,13 @@
     const oldCues = parseSubtitle(state.oldRaw || state.newRaw);
     const newCues = state.newRaw ? parseSubtitle(state.newRaw) : [];
     if (!oldCues.length) return alert('沒有讀到時間碼。請確認字幕格式是否包含起訖時間。');
+    // V1.1: 字幕 A 永遠是文字與分段的基準。字幕 B 只負責判斷片段是否保留、移除、調換或疑似新增。
     const oldBlocks = mergeCues(oldCues, state.mergeMode);
 
     if (state.newRaw && newCues.length) {
-      const newBlocks = mergeCues(newCues, state.mergeMode);
-      state.blocks = compareBlocks(oldBlocks, newBlocks, state.autoRequirements);
+      state.blocks = compareAgainstCanonicalA(oldBlocks, newCues, state.autoRequirements);
     } else {
-      state.blocks = oldBlocks.map((b, i) => makeEditorBlock({ ...b, newIndex: i, oldIndex: i, status: 'unchanged', similarity: 1 }, false));
+      state.blocks = oldBlocks.map((b, i) => makeEditorBlock({ ...b, newIndex: i, oldIndex: i, status: 'unchanged', similarity: 1, textSource:'A' }, false));
     }
     state.updatedAt = Date.now();
     saveProject();
@@ -187,7 +190,7 @@
         if (candidate) textLines.push(candidate.replace(/<[^>]+>/g, ''));
         i++;
       }
-      const text = textLines.join(' ').replace(/\s+/g, ' ').trim();
+      const text = textLines.reduce((acc, line) => smartJoin(acc, line), '').replace(/[ \t]+/g, ' ').trim();
       if (text) cues.push({ id: uid(), startRaw, endRaw, start: timeToSeconds(startRaw), end: timeToSeconds(endRaw), text });
     }
     return cues;
@@ -206,7 +209,8 @@
 
   function mergeCues(cues, mode='standard') {
     // 字幕沒有標點時，不依原始分行硬切；改以句長、停頓與常見語意起始詞做近似分句。
-    const cfg = mode === 'short' ? { target: 20, max: 32 } : mode === 'long' ? { target: 40, max: 58 } : { target: 28, max: 42 };
+    if (mode === 'original') return cues.map(cue => ({ id: uid(), start: cue.start, end: cue.end, startRaw: cue.startRaw, endRaw: cue.endRaw, text: cue.text, sourceCueIds:[cue.id] }));
+    const cfg = mode === 'long' ? { target: 42, max: 64 } : { target: 30, max: 46 };
     const boundaryRe = /^(有些人|很多人|這類|常被|那可以|不要|可以先|如果|所以|但是|但|卻|現在|而且|三高|雖然|例如|因為|即使|仍有|慢性發炎|因此|想要|第一步|看看|先瞭解|再決定|接著|身體一定|我自己|曾經|現在都|從營養|一個一個|這幾年|其實|常常|最後|我希望|讓健康|只要|找到|健康永遠|除了一開始|不同毒型|光知道|不是|而是)/;
     const out = [];
     let cur = null;
@@ -235,6 +239,149 @@
     const aLast = a.slice(-1), bFirst = b.slice(0,1);
     const needsSpace = /[A-Za-z0-9]$/.test(aLast) && /^[A-Za-z0-9]/.test(bFirst);
     return a + (needsSpace ? ' ' : '') + b;
+  }
+
+  function compareAgainstCanonicalA(oldBlocks, newCues, autoReq=true) {
+    // A 為 canonical：所有已匹配片段都顯示 A 的文字；B 只提供新版位置與「是否還存在」的訊號。
+    const candidates = [];
+    const maxWindow = 10;
+
+    oldBlocks.forEach((ab, ai) => {
+      const aNorm = norm(ab.text);
+      const aLen = aNorm.length;
+      if (!aLen) return;
+      for (let start = 0; start < newCues.length; start++) {
+        let text = '';
+        for (let end = start; end < Math.min(newCues.length, start + maxWindow); end++) {
+          text = smartJoin(text, newCues[end].text);
+          const bNorm = norm(text);
+          const bLen = bNorm.length;
+          if (!bLen) continue;
+          if (bLen < Math.max(3, aLen * .30)) continue;
+          if (bLen > Math.max(aLen * 2.1, aLen + 28)) break;
+
+          let score = textSimilarity(ab.text, text);
+          const coverage = Math.min(aLen, bLen) / Math.max(1, Math.max(aLen, bLen));
+          if (aNorm === bNorm) score = 1;
+          else if ((aNorm.includes(bNorm) || bNorm.includes(aNorm)) && coverage >= .62) {
+            score = Math.max(score, .68 + coverage * .28);
+          }
+          if (score >= .56) {
+            candidates.push({
+              ai, start, end, score, coverage, text,
+              startRaw:newCues[start].startRaw, endRaw:newCues[end].endRaw,
+              startSec:newCues[start].start, endSec:newCues[end].end
+            });
+          }
+        }
+      }
+    });
+
+    // 先取最可信的配對；同一段 B 不重複配給不同 A 區塊。
+    candidates.sort((x,y) => {
+      if (Math.abs(y.score - x.score) > .0001) return y.score - x.score;
+      if (Math.abs(y.coverage - x.coverage) > .0001) return y.coverage - x.coverage;
+      return (x.end-x.start) - (y.end-y.start);
+    });
+    const usedA = new Set();
+    const usedB = new Set();
+    const selected = [];
+    for (const c of candidates) {
+      if (usedA.has(c.ai)) continue;
+      let overlaps = false;
+      for (let j=c.start;j<=c.end;j++) if (usedB.has(j)) { overlaps=true; break; }
+      if (overlaps) continue;
+      usedA.add(c.ai);
+      for (let j=c.start;j<=c.end;j++) usedB.add(j);
+      selected.push(c);
+    }
+
+    // 依新版出現順序判斷哪些 A 區塊發生搬移。
+    const byNewOrder = [...selected].sort((a,b)=>a.start-b.start || a.end-b.end);
+    const lisPositions = new Set(longestIncreasingSubsequenceIndices(byNewOrder.map(m=>m.ai)));
+    byNewOrder.forEach((m,pos)=>{m.moved=!lisPositions.has(pos);m.newRank=pos;});
+
+    const timeline = [];
+    byNewOrder.forEach(m => {
+      const ab = oldBlocks[m.ai];
+      const status = m.score < .70 ? 'uncertain' : (m.moved ? 'moved' : 'unchanged');
+      timeline.push({
+        order:m.startSec,
+        block:makeEditorBlock({
+          ...ab,
+          text:ab.text,
+          compareText:m.text,
+          startRaw:m.startRaw,
+          endRaw:m.endRaw,
+          oldStartRaw:ab.startRaw,
+          oldEndRaw:ab.endRaw,
+          newIndex:m.newRank,
+          oldIndex:m.ai,
+          status,
+          similarity:m.score,
+          textSource:'A',
+          timeSource:'B'
+        }, autoReq)
+      });
+    });
+
+    // B 中完全沒有被 A 配對到的連續片段，只標成「疑似新增」，不視為可信主文。
+    let run = [];
+    const flushRun = () => {
+      if (!run.length) return;
+      const merged = mergeCues(run, 'standard');
+      merged.forEach(nb => {
+        timeline.push({
+          order:nb.start,
+          block:makeEditorBlock({
+            ...nb,
+            text:nb.text,
+            compareText:nb.text,
+            newIndex:null,
+            oldIndex:null,
+            status:'added',
+            similarity:0,
+            textSource:'B',
+            timeSource:'B'
+          }, autoReq)
+        });
+      });
+      run = [];
+    };
+    newCues.forEach((cue,i)=>{
+      if (usedB.has(i)) flushRun();
+      else run.push(cue);
+    });
+    flushRun();
+
+    timeline.sort((a,b)=>a.order-b.order);
+    // 重新給新版顯示序號，方便「舊版 # → 新版 #」說明。
+    let rank = 0;
+    timeline.forEach(item=>{
+      if (item.block.status !== 'removed') item.block.newIndex = rank++;
+      if (item.block.status === 'moved') {
+        const autoMove = item.block.requirements.find(r=>r.auto && r.text.startsWith('順序調換｜'));
+        if (autoMove) autoMove.text = `順序調換｜舊版 #${(item.block.oldIndex??0)+1} → 新版 #${(item.block.newIndex??0)+1}`;
+      }
+    });
+
+    const output = timeline.map(x=>x.block);
+    oldBlocks.forEach((ab, ai)=>{
+      if (!usedA.has(ai)) {
+        output.push(makeEditorBlock({
+          ...ab,
+          text:ab.text,
+          compareText:'',
+          newIndex:null,
+          oldIndex:ai,
+          status:'removed',
+          similarity:0,
+          textSource:'A',
+          timeSource:'A'
+        }, autoReq));
+      }
+    });
+    return output;
   }
 
   function compareBlocks(oldBlocks, newBlocks, autoReq=true) {
@@ -304,7 +451,7 @@
       id: uid(), status:data.status||'unchanged', similarity:data.similarity ?? 1,
       oldIndex:data.oldIndex ?? null, newIndex:data.newIndex ?? null,
       startRaw:data.startRaw||'', endRaw:data.endRaw||'', oldStartRaw:data.oldStartRaw||'', oldEndRaw:data.oldEndRaw||'',
-      text:data.text||'', oldText:data.oldText||'', requirements:[], links:[], images:[], forceBreak:false
+      text:data.text||'', oldText:data.oldText||'', compareText:data.compareText||'', textSource:data.textSource||'A', timeSource:data.timeSource||'A', requirements:[], links:[], images:[], forceBreak:false
     };
     if (autoReq) b.requirements.push(...autoRequirementsFor(b));
     return b;
@@ -312,9 +459,10 @@
 
   function autoRequirementsFor(b) {
     if (b.status === 'removed') return [{ id:uid(), cat:'移除', text:'移除此段', auto:true }];
-    if (b.status === 'added') return [{ id:uid(), cat:'剪輯', text:'新版新增片段', auto:true }];
+    if (b.status === 'added') return [{ id:uid(), cat:'剪輯', text:'疑似新增片段｜請確認實際影片內容', auto:true }];
     if (b.status === 'moved') return [{ id:uid(), cat:'剪輯', text:`順序調換｜舊版 #${(b.oldIndex??0)+1} → 新版 #${(b.newIndex??0)+1}`, auto:true }];
     if (b.status === 'modified') return [{ id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整，請以新版台詞為準', auto:true }];
+    if (b.status === 'uncertain') return [{ id:uid(), cat:'剪輯', text:'新版轉錄與字幕 A 差異較大｜請確認實際影片內容', auto:true }];
     if (b.status === 'moved_modified') return [
       { id:uid(), cat:'剪輯', text:`順序調換｜舊版 #${(b.oldIndex??0)+1} → 新版 #${(b.newIndex??0)+1}`, auto:true },
       { id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整，請以新版台詞為準', auto:true }
@@ -341,7 +489,7 @@
   function renderSummary() {
     const counts = Object.fromEntries(Object.keys(STATUS_META).map(k=>[k,0]));
     state.blocks.forEach(b=>counts[b.status]=(counts[b.status]||0)+1);
-    const ordered = ['removed','added','moved','modified','moved_modified','unchanged'];
+    const ordered = ['removed','added','moved','uncertain','unchanged'];
     els.summaryChips.innerHTML = ordered.map(k => `<div class="summary-chip"><strong>${counts[k]||0}</strong><span>${STATUS_META[k].label}</span></div>`).join('');
     els.filterRow.innerHTML = `<button class="filter-chip ${activeFilter==='all'?'active':''}" data-filter="all">全部</button>` + ordered.map(k=>`<button class="filter-chip ${activeFilter===k?'active':''}" data-filter="${k}">${STATUS_META[k].label}</button>`).join('');
     $$('.filter-chip', els.filterRow).forEach(btn=>btn.addEventListener('click',()=>{activeFilter=btn.dataset.filter;renderSummary();renderBlocks();}));
@@ -369,12 +517,13 @@
       const node=$('#blockTemplate').content.firstElementChild.cloneNode(true);
       const meta=STATUS_META[b.status]||STATUS_META.unchanged;
       const pill=$('.status-pill',node); pill.textContent=meta.label; pill.className=`status-pill ${meta.cls}`;
-      const parts=[]; if(b.oldIndex!=null)parts.push(`舊版 #${b.oldIndex+1}`); if(b.newIndex!=null)parts.push(`新版 #${b.newIndex+1}`); if(b.similarity && b.status!=='unchanged')parts.push(`相似度 ${Math.round(b.similarity*100)}%`);
+      const parts=[]; if(b.oldIndex!=null)parts.push(`字幕 A #${b.oldIndex+1}`); if(b.newIndex!=null)parts.push(`新版位置 #${b.newIndex+1}`); if(b.similarity && b.status!=='unchanged')parts.push(`比對相似度 ${Math.round(b.similarity*100)}%`); if(b.textSource==='A')parts.push('文字以 A 為準');
       $('.position-meta',node).textContent=parts.join(' · ');
-      $('.time-row',node).textContent=`${b.startRaw||'—'} → ${b.endRaw||'—'}`;
+      const timeLabel=b.timeSource==='B'?'新版時間':'原始時間';
+      $('.time-row',node).textContent=`${timeLabel}｜${b.startRaw||'—'} → ${b.endRaw||'—'}`;
       const ta=$('.script-text',node); ta.value=b.text; if(b.status==='removed')ta.classList.add('deleted');
       ta.addEventListener('input',e=>{b.text=e.target.value;saveProject();updatePageEstimate();});
-      if(b.oldText && norm(b.oldText)!==norm(b.text)){ const wrap=$('.old-text-wrap',node);wrap.classList.remove('hidden');$('.old-text',wrap).textContent=b.oldText; }
+      if(b.compareText && b.textSource==='A' && norm(b.compareText)!==norm(b.text) && (b.status==='uncertain' || b.similarity < .90)){ const wrap=$('.compare-text-wrap',node);wrap.classList.remove('hidden');$('.compare-text',wrap).textContent=b.compareText; }
       const force=$('.force-break',node);force.checked=!!b.forceBreak;force.addEventListener('change',e=>{b.forceBreak=e.target.checked;saveProject();updatePageEstimate();});
       $('.merge-prev',node).disabled = idx===0;
       $('.merge-next',node).disabled = idx===state.blocks.length-1;
@@ -457,7 +606,7 @@
     }); push(); return pages;
   }
 
-  function estimateUnits(b){let u=.8;u+=Math.min(2.4,b.text.length/38*.75);u+=b.requirements.length*.52;u+=b.links.length*.28;if(b.images.length)u+=1.05+Math.min(1,b.images.length*.25);if(b.oldText&&norm(b.oldText)!==norm(b.text))u+=.55;return Math.max(1.35,u);}
+  function estimateUnits(b){let u=.8;u+=Math.min(2.4,b.text.length/38*.75);u+=b.requirements.length*.52;u+=b.links.length*.28;if(b.images.length)u+=1.05+Math.min(1,b.images.length*.25);if(b.compareText&&b.textSource==='A'&&norm(b.compareText)!==norm(b.text)&&b.similarity<.90)u+=.55;return Math.max(1.35,u);}
   function updatePageEstimate(){if(!state.blocks.length){els.pageEstimate.textContent='尚未計算';return;}const pages=getPages();els.pageEstimate.innerHTML=`預估 <strong>${pages.length}</strong> 頁<br><span style="font-weight:400;color:#6f7a95">依「${state.density==='compact'?'緊湊':state.density==='relaxed'?'舒適':'標準'}」密度自動分頁</span>`;}
 
   function openPreviewModal(){renderSlidePreview();els.previewModal.classList.remove('hidden');}

@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>影音需求生成器｜Video Brief Builder</title>
-  <meta name="description" content="匯入兩版字幕，自動比對剪輯差異、補影音需求並匯出 PPTX。" />
+  <meta name="description" content="以影音字幕 A 為文字基準，比對重剪版字幕 B 的刪除、調換與疑似新增，再補影音需求並匯出 PPTX。" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -15,13 +15,15 @@
         <div>
           <p class="eyebrow">VIDEO BRIEF BUILDER · V1 PROTOTYPE</p>
           <h1>影音需求生成器</h1>
-          <p class="hero-copy">兩版字幕自動比對 → 找出移除／新增／調換／文字修改 → 補需求 → 自動排版 → 匯出 PPTX。</p>
+          <p class="hero-copy">以字幕 A 為文字基準 → 比對重剪版的移除／調換／疑似新增 → 補需求 → 自動排版 → 匯出 PPTX。</p>
         </div>
         <div class="hero-actions">
           <button class="btn ghost light" id="loadDemoBtn">載入示範</button>
-          <button class="btn ghost light" id="importProjectBtn">匯入專案</button>
-          <button class="btn primary light" id="exportProjectBtn">匯出 JSON</button>
+          <button class="btn ghost light" id="importProjectBtn">匯入專案備份</button>
+          <button class="btn ghost light" id="exportProjectBtn">專案備份 (.json)</button>
+          <button class="btn primary light" id="exportPptxTopBtn">匯出簡報 (.pptx)</button>
           <input id="projectFileInput" type="file" accept="application/json,.json" hidden />
+          <p class="format-note">JSON 只用來保存編輯進度；Google 簡報請使用 PPTX 匯出後再開啟。</p>
         </div>
       </div>
     </header>
@@ -45,11 +47,11 @@
           </select>
         </div>
         <div class="field compact merge-field">
-          <label for="mergeSelect">字幕合併</label>
+          <label for="mergeSelect">台詞分段</label>
           <select id="mergeSelect">
-            <option value="short">短句</option>
-            <option value="standard" selected>標準</option>
-            <option value="long">長句</option>
+            <option value="original">依字幕 A 原始段落</option>
+            <option value="standard" selected>依字幕 A 自然句（推薦）</option>
+            <option value="long">依字幕 A 合併長句</option>
           </select>
         </div>
       </section>
@@ -76,8 +78,8 @@
           <div class="step">02</div>
           <div class="upload-card-head">
             <div>
-              <h2>重剪版本字幕 B</h2>
-              <p>自己重剪後的新字幕；可留空只做單版需求</p>
+              <h2>重剪版本轉錄字幕 B</h2>
+              <p>只用來判斷片段位置與差異；不會覆蓋字幕 A 文字</p>
             </div>
             <span class="file-badge" id="newFileBadge">選填</span>
           </div>
@@ -88,6 +90,14 @@
           <input id="newSubtitleInput" type="file" accept=".txt,.srt,.vtt,text/plain,text/vtt,application/x-subrip" hidden />
           <textarea id="newPaste" class="paste-area" placeholder="或直接貼上重剪版字幕內容"></textarea>
         </article>
+      </section>
+
+      <section class="compare-rule card">
+        <div class="rule-icon">A</div>
+        <div>
+          <strong>比對原則：字幕 A 是文字與分段基準</strong>
+          <p>字幕 B 只用來判斷「哪些片段還在、被移除、被調換或疑似新增」。小幅轉錄錯字不會直接改寫字幕 A。</p>
+        </div>
       </section>
 
       <section class="action-row">
@@ -167,15 +177,20 @@
   <template id="blockTemplate">
     <article class="script-block card">
       <div class="block-status-line">
-        <span class="status-pill"></span>
-        <span class="position-meta"></span>
-        <div class="block-tools"><button class="mini-tool merge-prev" type="button">↑ 合併上一段</button><button class="mini-tool merge-next" type="button">↓ 合併下一段</button><button class="mini-tool split-here" type="button">↕ 從游標拆分</button></div><label class="break-toggle"><input type="checkbox" class="force-break" /> 此處強制換頁</label>
+        <div class="block-status-main">
+          <span class="status-pill"></span>
+          <span class="position-meta"></span>
+        </div>
+        <div class="block-actions-row">
+          <div class="block-tools"><button class="mini-tool merge-prev" type="button">↑ 合併上一段</button><button class="mini-tool merge-next" type="button">↓ 合併下一段</button><button class="mini-tool split-here" type="button">↕ 從游標拆分</button></div>
+          <label class="break-toggle"><input type="checkbox" class="force-break" /> 此處強制換頁</label>
+        </div>
       </div>
       <div class="block-grid">
         <div class="block-main">
           <div class="time-row"></div>
           <textarea class="script-text"></textarea>
-          <div class="old-text-wrap hidden"><span>舊版</span><div class="old-text"></div></div>
+          <div class="compare-text-wrap hidden"><span>新版轉錄（僅供比對）</span><div class="compare-text"></div></div>
 
           <div class="requirements-section">
             <div class="section-title-row"><h4>影音需求</h4><span class="auto-hint"></span></div>
