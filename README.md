@@ -1,8 +1,8 @@
-# Video Brief Builder V1.6
+# Video Brief Builder V1.7
 
 瀏覽器本機版影音需求簡報工具。
 
-## V1.6 重點
+## V1.7 重點
 
 - **完全前端處理**：字幕解析、A/B 文本比對、相似度計算、分段、需求編輯、LocalStorage 與 PPTX 產出都在瀏覽器 JavaScript 執行；目前沒有後端。
 - **A 文字先校正、B 時間後分段**：進入人工分段頁前，先用字幕 A 校正可確認的 B 文本，再由 B 的時間軸與順序控制簡報。
@@ -18,7 +18,7 @@
 整個資料夾可直接部署到 GitHub Pages；需保留 `vendor/` 內的 `jszip.min.js` 與 `pptxgen.min.js`。
 
 
-## V1.6 update
+## V1.7 update
 
 - 快捷需求改成分類顯示：畫面、字幕、字卡、素材、聲音、動畫、剪輯、移除、其他。
 - 預設需求管理視窗也會依分類分區。

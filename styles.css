@@ -174,3 +174,6 @@ button{cursor:pointer}
 .preset-editor-rows{display:flex;flex-direction:column;gap:8px}
 .preset-row{background:#fff;border:1px solid rgba(217,225,243,.9);border-radius:10px;padding:7px}
 @media (max-width:650px){.preset-group-head{align-items:flex-start;flex-direction:column}.preset-chip{font-size:12px;padding:7px 10px}.preset-editor-group-head{align-items:flex-start;flex-direction:column}}
+
+/* V1.7 delivery mode: hide decorative upload step numbers if older markup is imported */
+.step{display:none!important}

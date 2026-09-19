@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>影音需求生成器｜Video Brief Builder</title>
-  <meta name="description" content="以重剪版字幕 B 決定時間軸與分段，字幕 A 校正文字與判斷刪除／調換，再補影音需求並匯出 PPTX。" />
+  <meta name="description" content="以重剪版字幕 B 決定內部分段與順序，字幕 A 校正文字與產生交付給影音的 A 腳本調整需求。" />
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
@@ -13,9 +13,9 @@
       <div class="mesh" aria-hidden="true"></div>
       <div class="hero-inner">
         <div>
-          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.6 PROTOTYPE</p>
+          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.7 PROTOTYPE</p>
           <h1>影音需求生成器</h1>
-          <p class="hero-copy">先用字幕 A 校正重剪版 B 的文字，再以 B 決定時間軸與分段 → 分類補需求 → 比對移除／調換／疑似新增 → 匯出 PPTX。</p>
+          <p class="hero-copy">先套用字幕 A 的正確文字，再整理 B 的分段與順序；輸出簡報時只描述 A 腳本哪裡要移除、調換或補充。</p>
         </div>
         <div class="hero-actions">
           <button class="btn ghost light" id="loadDemoBtn">載入示範</button>
@@ -94,7 +94,7 @@
         <div class="rule-icon">A</div>
         <div>
           <strong>新版結構看 B，文字正確性看 A</strong>
-          <p>字幕 B 決定最終影片的時間、順序與分段；字幕 A 用來校正 B 的轉錄錯字，並判斷哪些原始片段被移除或調換。</p>
+          <p>字幕 B 用於判斷重剪後的順序與分段；字幕 A 用來校正 B 的轉錄錯字，並產生「A 腳本要怎麼調整成新版」的交付需求。</p>
         </div>
       </section>
 
@@ -107,10 +107,10 @@
       <section id="segmentationReview" class="segmentation-review hidden">
         <div class="review-head card">
           <div>
-            <p class="eyebrow blue">STEP 03 · LINE REVIEW</p>
-            <h2>先確認重剪版 B 的台詞分段</h2>
-            <p>這一步仍以重剪後字幕 B 為時間軸，但會先用字幕 A 校正可確認的文字，再讓你調整分段。Enter 只做同段換行；輸入一個空白行（連按兩次 Enter）才會拆成下一段，因此不會再和中文選字衝突。</p>
-            <div class="keyboard-hint"><span><kbd>Enter</kbd> 同段換行</span><span><kbd>Enter</kbd> × 2（空白行）拆成新段</span><span><kbd>Backspace</kbd> 段首合併</span><span><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> 另起一頁</span><span>中文選字 Enter 不會觸發分段</span></div>
+            <p class="eyebrow blue">STEP 03 · SCRIPT REVIEW</p>
+            <h2>先用 A 正確文字整理重剪版分段</h2>
+            <p>這一步會先把 B 可對應到 A 的內容替換成 A 的正確文字，再讓你用乾淨台詞整理分段。注音選字時按 Enter 只會確認候選字；選字完成後再按 Enter 才會分段。</p>
+            <div class="keyboard-hint"><span><kbd>Enter</kbd> 分段</span><span><kbd>Shift</kbd> + <kbd>Enter</kbd> 同段換行</span><span><kbd>Backspace</kbd> 段首合併</span><span><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> 另起一頁</span><span>中文選字 Enter 不會觸發分段</span></div>
           </div>
           <div class="review-head-actions">
             <span id="segmentationCount" class="review-count">0 段</span>
@@ -121,7 +121,7 @@
         </div>
         <div id="segmentationList" class="segmentation-list"></div>
         <div class="review-bottom card">
-          <span>此處顯示的是「B 的時間軸＋A 校正後文字」。先用換行整理閱讀，再用空白行切成新段；後面的需求頁會沿用這個結果。</span>
+          <span>此處顯示的是「B 的順序＋A 校正後文字」。先在這裡整理分段；後面的需求頁會沿用這個結果，匯出簡報時不顯示 B 時間軸。</span>
           <button class="btn primary" onclick="document.getElementById('confirmSegmentsBtn').click()">確認分段並進入需求編輯</button>
         </div>
       </section>

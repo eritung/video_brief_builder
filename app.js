@@ -1,12 +1,12 @@
-/* Video Brief Builder V1.6 - browser-only prototype */
+/* Video Brief Builder V1.7 - browser-only prototype */
 (() => {
   'use strict';
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const STORAGE_KEY = 'videoBriefBuilderV16Project';
-  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
-  const PRESET_KEY = 'videoBriefBuilderV16Presets';
+  const STORAGE_KEY = 'videoBriefBuilderV17Project';
+  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV16Project','videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
+  const PRESET_KEY = 'videoBriefBuilderV17Presets';
 
   const STATUS_META = {
     unchanged: { label: '未變更', cls: 'status-unchanged' },
@@ -132,7 +132,7 @@
   }
 
   function newProject() {
-    return { version: 1.6, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
+    return { version: 1.7, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
   }
 
 
@@ -184,14 +184,14 @@
     state.density = els.densitySelect.value;
     state.autoRequirements = els.autoReq.checked;
     if (!state.oldRaw) return alert('請先匯入影音夥伴提供的字幕 A，作為文字校正基準。');
-    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.6 會以 B 的時間軸與順序為主，並在分段前先用 A 校正文字。');
+    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.7 會先套用 A 的正確文字，再用 B 的分段與順序建立需求。');
 
     const oldCues = parseSubtitle(state.oldRaw);
     const newCues = parseSubtitle(state.newRaw);
     if (!oldCues.length) return alert('字幕 A 沒有讀到時間碼。請確認格式是否包含起訖時間。');
     if (!newCues.length) return alert('字幕 B 沒有讀到時間碼。請確認格式是否包含起訖時間。');
 
-    // V1.6: 先建立 B 的時間區塊，再在「進入人工分段前」用 A 校正文案。
+    // V1.7: 先建立 B 的順序區塊，再在「進入人工分段前」用 A 校正文案。
     // compareText 永遠保留 B 的原始轉錄，之後仍可拿來做差異判斷。
     const rawReviewBlocks = mergeCues(newCues, state.mergeMode).map((b,i)=>({
       ...b, reviewIndex:i, forceBreak:false, compareText:b.text, textSource:'B', timeSource:'B', correctedFromA:false
@@ -239,9 +239,25 @@
         </div>`;
       const ta = $('.segment-text', node);
       let imeComposing = false;
-      let lastCompositionEndAt = 0;
-      ta.addEventListener('compositionstart', () => { imeComposing = true; });
-      ta.addEventListener('compositionend', () => { imeComposing = false; lastCompositionEndAt = Date.now(); });
+      let ignoreNextEnterAfterIme = false;
+      let lastImeEnterAt = 0;
+      let clearImeGuardTimer = null;
+      ta.addEventListener('compositionstart', () => {
+        imeComposing = true;
+        ignoreNextEnterAfterIme = false;
+        if (clearImeGuardTimer) clearTimeout(clearImeGuardTimer);
+      });
+      ta.addEventListener('compositionend', () => {
+        imeComposing = false;
+        // 注音確認候選字時，各瀏覽器事件順序不同：
+        // 有些會先 keydown(Enter,isComposing)，有些會先 compositionend 再 keydown(Enter)。
+        // 若 keydown 已被判定為 IME Enter，就不再額外忽略下一次 Enter；反之才忽略一次。
+        if (Date.now() - lastImeEnterAt > 160) {
+          ignoreNextEnterAfterIme = true;
+          if (clearImeGuardTimer) clearTimeout(clearImeGuardTimer);
+          clearImeGuardTimer = setTimeout(() => { ignoreNextEnterAfterIme = false; }, 900);
+        }
+      });
       ta.addEventListener('input', e => {
         b.text = e.target.value;
         b.manuallyEdited = true;
@@ -249,8 +265,14 @@
       });
       ta.addEventListener('keydown', e => {
         const imeActive = imeComposing || e.isComposing || e.keyCode === 229;
-        const justConfirmedCandidate = e.key === 'Enter' && Date.now() - lastCompositionEndAt < 80;
-        if (imeActive || justConfirmedCandidate) return;
+        if (e.key === 'Enter' && imeActive) {
+          lastImeEnterAt = Date.now();
+          return;
+        }
+        if (e.key === 'Enter' && ignoreNextEnterAfterIme) {
+          ignoreNextEnterAfterIme = false;
+          return;
+        }
         if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
           e.preventDefault();
           b.forceBreak = !b.forceBreak;
@@ -464,8 +486,11 @@
 
       // 分段頁的目的，是讓使用者「拿 A 的正確字去切 B 的時間」。
       // 因此 V1.6 比過去更積極套用 A；但仍要求基本覆蓋率，避免把完全不同的新句硬套進來。
-      const strongContainment = m.coverage >= .52 && m.score >= .62;
-      const confident = m.score >= (aggressive ? .70 : .82) && m.coverage >= .42;
+      const bNorm = norm(out.compareText || b.text);
+      const aNorm = norm(m.aText);
+      const oneContainsOther = !!aNorm && !!bNorm && (aNorm.includes(bNorm) || bNorm.includes(aNorm));
+      const strongContainment = oneContainsOther && m.coverage >= .30 && m.score >= .55;
+      const confident = m.score >= (aggressive ? .64 : .78) && m.coverage >= .34;
       if (confident || strongContainment) {
         out.text = m.aText;
         out.correctedFromA = true;
@@ -591,7 +616,7 @@
       if(b.timeSource==='B' && b.type!=='manual') b.newIndex=newRank++;
       if(b.status==='moved'){
         const autoMove=b.requirements.find(r=>r.auto&&r.text.startsWith('順序調換｜'));
-        if(autoMove) autoMove.text=`順序調換｜原始 A #${(b.oldIndex??0)+1} → 新版 B #${(b.newIndex??0)+1}`;
+        if(autoMove) autoMove.text=movedRequirementText(b);
       }
     });
     return ordered;
@@ -671,18 +696,31 @@
   }
 
 
+  function aSourceLabel(b) {
+    if (b.oldStartRaw) return `A ${b.oldStartRaw}–${b.oldEndRaw || '—'}`;
+    if (b.timeSource === 'A' && b.startRaw) return `A ${b.startRaw}–${b.endRaw || '—'}`;
+    if (b.oldIndex != null) return `原始 A #${(b.oldIndex??0)+1}`;
+    return 'A 原始腳本';
+  }
+
   function movedRequirementText(b) {
-    const oldTime = b.oldStartRaw ? `A ${b.oldStartRaw}–${b.oldEndRaw || '—'}` : `原始 A #${(b.oldIndex??0)+1}`;
-    const newTime = b.startRaw ? `新版 B ${b.startRaw}–${b.endRaw || '—'}` : `新版 B #${(b.newIndex??0)+1}`;
-    return `順序調換｜從 ${oldTime} 移至 ${newTime}`;
+    return `順序調換｜從 ${aSourceLabel(b)} 移至此處`;
+  }
+
+  function briefTimeLabelForPpt(b) {
+    if (b.type === 'manual') return '自訂新增頁';
+    if (b.status === 'added') return '新增片段｜A 原始字幕未找到對應';
+    if (b.status === 'removed') return `${aSourceLabel(b)}（移除）`;
+    if (b.oldStartRaw || b.timeSource === 'A') return aSourceLabel(b);
+    return 'A 原始字幕對應段落';
   }
 
   function autoRequirementsFor(b) {
     if (b.status === 'removed') return [{ id:uid(), cat:'移除', text:'移除此段', auto:true }];
-    if (b.status === 'added') return [{ id:uid(), cat:'剪輯', text:'新版 B 疑似新增片段｜請確認實際影片內容', auto:true }];
+    if (b.status === 'added') return [{ id:uid(), cat:'剪輯', text:'新增片段｜A 原始字幕未找到對應，請確認實際影片內容', auto:true }];
     if (b.status === 'moved') return [{ id:uid(), cat:'剪輯', text:movedRequirementText(b), auto:true }];
     if (b.status === 'modified') return [{ id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整｜文字請以字幕 A 校正後版本為準', auto:true }];
-    if (b.status === 'uncertain') return [{ id:uid(), cat:'剪輯', text:'新版 B 轉錄與字幕 A 差異較大｜請確認實際影片內容', auto:true }];
+    if (b.status === 'uncertain') return [{ id:uid(), cat:'剪輯', text:'此段與字幕 A 差異較大｜請確認實際影片內容', auto:true }];
     if (b.status === 'moved_modified') return [
       { id:uid(), cat:'剪輯', text:movedRequirementText(b), auto:true },
       { id:uid(), cat:'剪輯', text:'文字／剪輯內容有調整｜文字請以字幕 A 校正後版本為準', auto:true }
@@ -977,7 +1015,7 @@
       if(p.global){card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)}</h4><div class="slide-block"><strong>整支影片需求</strong><span>${state.globalRequirements.filter(Boolean).map(escapeHtml).join('／')}</span></div>`;}
       else if(p.manual){const b=p.blocks[0];card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · 自訂新增頁</h4><div class="slide-block manual"><strong>自訂頁面</strong><span>${escapeHtml(b.text||'（尚未輸入說明）')}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`;}
       else{card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · P${i+1}</h4>`+p.blocks.map(b=>{
-        const timeLabel=b.timeSource==='B'?`B ${b.startRaw}–${b.endRaw}`:`A ${b.startRaw}–${b.endRaw}（移除）`;
+        const timeLabel=briefTimeLabelForPpt(b);
         return `<div class="slide-block ${b.status==='removed'?'red':''}"><strong>${STATUS_META[b.status].label} · ${escapeHtml(timeLabel)}</strong><span>${escapeHtml(b.text)}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`;
       }).join('');}
       els.slidePreview.appendChild(card);
@@ -1025,9 +1063,9 @@
     const statusColor=b.status==='removed'?C.red:b.status==='added'?C.green:b.status.includes('moved')?C.purple:b.status==='modified'?C.orange:'7C879E';
     sl.addShape(pptx.ShapeType.roundRect,{x:x+.20,y:y+.15,w:1.00,h:.32,rectRadius:.05,fill:{color:statusColor},line:{color:statusColor}});
     sl.addText(meta.label,{x:x+.20,y:y+.208,w:1.00,h:.18,fontFace:'Noto Sans TC',fontSize:9.8,bold:true,color:'FFFFFF',align:'center',margin:0});
-    const primaryTime=b.timeSource==='B'?`B  ${b.startRaw||'—'} → ${b.endRaw||'—'}`:`A  ${b.startRaw||'—'} → ${b.endRaw||'—'}（移除）`;
-    sl.addText(primaryTime,{x:x+1.34,y:y+.17,w:3.45,h:.23,fontFace:'Noto Sans TC',fontSize:12.2,bold:true,color:C.blue2,margin:0});
-    if(b.timeSource==='B'&&b.oldStartRaw){sl.addText(`A  ${b.oldStartRaw} → ${b.oldEndRaw||'—'}`,{x:x+4.92,y:y+.18,w:4.05,h:.22,fontFace:'Noto Sans TC',fontSize:11.6,bold:true,color:C.muted,margin:0});}
+    const primaryTime=briefTimeLabelForPpt(b);
+    sl.addText(primaryTime,{x:x+1.34,y:y+.17,w:5.55,h:.25,fontFace:'Noto Sans TC',fontSize:13.1,bold:true,color:C.blue2,margin:0});
+    if(b.status==='moved'){sl.addText('由原位置移至此處',{x:x+6.98,y:y+.18,w:2.55,h:.22,fontFace:'Noto Sans TC',fontSize:11.8,bold:true,color:C.muted,margin:0});}
     if(b._continuation){sl.addText('續頁',{x:x+w-1.06,y:y+.18,w:.72,h:.20,fontFace:'Noto Sans TC',fontSize:10.2,bold:true,color:C.muted,align:'right',margin:0});}
 
     const imgCount=(b.images||[]).length;
