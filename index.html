@@ -13,9 +13,9 @@
       <div class="mesh" aria-hidden="true"></div>
       <div class="hero-inner">
         <div>
-          <p class="eyebrow">VIDEO BRIEF BUILDER · V1 PROTOTYPE</p>
+          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.2 PROTOTYPE</p>
           <h1>影音需求生成器</h1>
-          <p class="hero-copy">以字幕 A 為文字基準 → 比對重剪版的移除／調換／疑似新增 → 補需求 → 自動排版 → 匯出 PPTX。</p>
+          <p class="hero-copy">先確認字幕 A 的台詞分段 → 比對重剪版的移除／調換／疑似新增 → 補需求 → 依時間排序 → 匯出 PPTX。</p>
         </div>
         <div class="hero-actions">
           <button class="btn ghost light" id="loadDemoBtn">載入示範</button>
@@ -101,9 +101,29 @@
       </section>
 
       <section class="action-row">
-        <button id="analyzeBtn" class="btn primary big">開始解析／比對</button>
+        <button id="analyzeBtn" class="btn primary big">整理字幕 A／檢查分段</button>
         <button id="clearBtn" class="btn ghost big">清空</button>
         <span class="privacy-note">所有字幕與需求都在瀏覽器本機處理，不會上傳到伺服器。</span>
+      </section>
+
+      <section id="segmentationReview" class="segmentation-review hidden">
+        <div class="review-head card">
+          <div>
+            <p class="eyebrow blue">STEP 03 · LINE REVIEW</p>
+            <h2>先確認台詞分段</h2>
+            <p>這一步只看影音提供的字幕 A。可先合併、拆分或直接修改每一段，再進入差異比對與需求編輯；後續簡報會以字幕 A 的時間順序排列。</p>
+          </div>
+          <div class="review-head-actions">
+            <span id="segmentationCount" class="review-count">0 段</span>
+            <button id="rebuildSegmentsBtn" class="btn ghost">依目前分段模式重整</button>
+            <button id="confirmSegmentsBtn" class="btn primary">確認分段 → 比對 B</button>
+          </div>
+        </div>
+        <div id="segmentationList" class="segmentation-list"></div>
+        <div class="review-bottom card">
+          <span>確認後仍可在需求編輯階段繼續拆句／合併；這裡只是先把大部分分段整理好。</span>
+          <button class="btn primary" onclick="document.getElementById('confirmSegmentsBtn').click()">確認分段並進入需求編輯</button>
+        </div>
       </section>
 
       <section id="resultsSection" class="results hidden">
@@ -139,6 +159,7 @@
           </aside>
 
           <div class="blocks-wrap">
+            <div class="blocks-toolbar"><div><strong>需求頁面</strong><span>依字幕 A 時間順序排列；「另起一頁」與手動新增頁會保留。</span></div><button id="insertPageEndBtn" class="btn ghost">＋ 插入新頁</button></div>
             <div id="blocksContainer" class="blocks"></div>
           </div>
         </div>
@@ -167,7 +188,7 @@
     <div class="modal-backdrop" data-close-modal="previewModal"></div>
     <div class="modal-panel xwide">
       <div class="modal-head">
-        <div><p class="eyebrow blue">SLIDE PREVIEW</p><h2 id="previewModalTitle">簡報自動分頁預覽</h2></div>
+        <div><p class="eyebrow blue">SLIDE PREVIEW</p><h2 id="previewModalTitle">簡報分頁／時間順序預覽</h2></div>
         <button class="icon-btn" data-close-modal="previewModal">×</button>
       </div>
       <div id="slidePreview" class="slide-preview"></div>
@@ -182,7 +203,7 @@
           <span class="position-meta"></span>
         </div>
         <div class="block-actions-row">
-          <div class="block-tools"><button class="mini-tool merge-prev" type="button">↑ 合併上一段</button><button class="mini-tool merge-next" type="button">↓ 合併下一段</button><button class="mini-tool split-here" type="button">↕ 從游標拆分</button></div>
+          <div class="block-tools"><button class="mini-tool merge-prev" type="button">↑ 合併上一段</button><button class="mini-tool merge-next" type="button">↓ 合併下一段</button><button class="mini-tool split-here" type="button">↕ 從游標拆分</button><button class="mini-tool insert-page-after" type="button">＋ 在此後插入新頁</button></div>
           <label class="break-toggle"><input type="checkbox" class="force-break" /> 此處強制換頁</label>
         </div>
       </div>

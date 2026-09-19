@@ -4,7 +4,8 @@
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const STORAGE_KEY = 'videoBriefBuilderV11Project';
+  const STORAGE_KEY = 'videoBriefBuilderV12Project';
+  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV11Project'];
   const PRESET_KEY = 'videoBriefBuilderV1Presets';
 
   const STATUS_META = {
@@ -15,6 +16,7 @@
     modified: { label: '文字修改', cls: 'status-modified' },
     moved_modified: { label: '調換＋文字修改', cls: 'status-moved_modified' },
     uncertain: { label: '需確認', cls: 'status-uncertain' },
+    manual: { label: '自訂頁', cls: 'status-manual' },
   };
 
   const DEFAULT_PRESETS = [
@@ -59,7 +61,8 @@
     results: $('#resultsSection'), summaryChips: $('#summaryChips'), filterRow: $('#filterRow'), blocks: $('#blocksContainer'),
     changedOnly: $('#changedOnlyToggle'), autoReq: $('#autoReqToggle'), globalReqList: $('#globalReqList'), pageEstimate: $('#pageEstimate'),
     presetModal: $('#presetModal'), presetEditor: $('#presetEditor'), previewModal: $('#previewModal'), slidePreview: $('#slidePreview'),
-    projectFileInput: $('#projectFileInput')
+    projectFileInput: $('#projectFileInput'),
+    segmentationReview: $('#segmentationReview'), segmentationList: $('#segmentationList'), segmentationCount: $('#segmentationCount')
   };
 
   init();
@@ -72,7 +75,8 @@
     bindDropZone($('#newDropZone'), 'new');
     bindEvents();
     const demoMode = new URLSearchParams(location.search).get('demo') === '1';
-    if (demoMode && !state.blocks?.length) loadDemo();
+    if (demoMode && !state.blocks?.length && !state.canonicalBlocks?.length) loadDemo();
+    else if (state.stage === 'review' && state.canonicalBlocks?.length) renderSegmentationReview();
     else if (state.blocks?.length) renderAll();
   }
 
@@ -98,11 +102,14 @@
     $('#resetPresetsBtn').addEventListener('click', () => { presets = clone(DEFAULT_PRESETS); renderPresetEditor(); });
     $('#addPresetBtn').addEventListener('click', () => { presets.push({ id: uid(), cat: '其他', label: '新需求', text: '' }); renderPresetEditor(); });
     $('#savePresetsBtn').addEventListener('click', savePresetEditor);
+    $('#confirmSegmentsBtn').addEventListener('click', confirmSegmentation);
+    $('#rebuildSegmentsBtn').addEventListener('click', analyze);
+    $('#insertPageEndBtn').addEventListener('click', () => insertManualPage(state.blocks.length - 1));
     document.addEventListener('keydown', e => { if (e.key === 'Escape') $$('.modal:not(.hidden)').forEach(m => m.classList.add('hidden')); });
   }
 
   function newProject() {
-    return { version: 1.1, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', blocks: [], globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
+    return { version: 1.2, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
   }
 
   function hydrateTopFields() {
@@ -155,19 +162,85 @@
     if (!state.oldRaw && !state.newRaw) return alert('請至少匯入或貼上一份字幕。');
 
     const oldCues = parseSubtitle(state.oldRaw || state.newRaw);
-    const newCues = state.newRaw ? parseSubtitle(state.newRaw) : [];
     if (!oldCues.length) return alert('沒有讀到時間碼。請確認字幕格式是否包含起訖時間。');
-    // V1.1: 字幕 A 永遠是文字與分段的基準。字幕 B 只負責判斷片段是否保留、移除、調換或疑似新增。
-    const oldBlocks = mergeCues(oldCues, state.mergeMode);
-
-    if (state.newRaw && newCues.length) {
-      state.blocks = compareAgainstCanonicalA(oldBlocks, newCues, state.autoRequirements);
-    } else {
-      state.blocks = oldBlocks.map((b, i) => makeEditorBlock({ ...b, newIndex: i, oldIndex: i, status: 'unchanged', similarity: 1, textSource:'A' }, false));
-    }
+    // V1.2: 先只整理字幕 A，讓使用者確認每一段台詞的切法；確認後才比對 B 與產生需求頁面。
+    state.canonicalBlocks = mergeCues(oldCues, state.mergeMode).map((b,i)=>({ ...b, oldIndex:i, forceBreak:false }));
+    state.blocks = [];
+    state.stage = 'review';
     state.updatedAt = Date.now();
     saveProject();
+    renderSegmentationReview();
+  }
+
+  function confirmSegmentation() {
+    if (!state.canonicalBlocks?.length) return alert('請先整理字幕 A。');
+    const newCues = state.newRaw ? parseSubtitle(state.newRaw) : [];
+    if (state.newRaw && newCues.length) {
+      state.blocks = compareAgainstCanonicalA(state.canonicalBlocks, newCues, state.autoRequirements);
+    } else {
+      state.blocks = state.canonicalBlocks.map((b, i) => makeEditorBlock({ ...b, newIndex:i, oldIndex:i, status:'unchanged', similarity:1, textSource:'A', timeSource:'A' }, false));
+    }
+    state.blocks = sortBlocksChronologically(state.blocks);
+    state.stage = 'edit';
+    saveProject();
     renderAll();
+    requestAnimationFrame(()=>document.querySelector('#resultsSection')?.scrollIntoView({behavior:'smooth', block:'start'}));
+  }
+
+  function renderSegmentationReview() {
+    els.results.classList.add('hidden');
+    els.segmentationReview.classList.remove('hidden');
+    els.segmentationList.innerHTML = '';
+    els.segmentationCount.textContent = `共 ${state.canonicalBlocks.length} 段`;
+    state.canonicalBlocks.forEach((b, idx) => {
+      const node = document.createElement('article');
+      node.className = 'segment-item';
+      node.innerHTML = `<div class="segment-meta"><span class="segment-index">${idx+1}</span><span>${escapeHtml(b.startRaw)} → ${escapeHtml(b.endRaw)}</span></div>
+        <textarea class="segment-text" aria-label="第 ${idx+1} 段台詞">${escapeHtml(b.text)}</textarea>
+        <div class="segment-tools">
+          <div class="segment-tool-left"><button class="mini-tool seg-merge-prev">↑ 合併上一段</button><button class="mini-tool seg-merge-next">↓ 合併下一段</button><button class="mini-tool seg-split">↕ 從游標拆分</button></div>
+          <label class="break-toggle"><input type="checkbox" class="seg-force-break" ${b.forceBreak?'checked':''}> 這句另起一頁</label>
+        </div>`;
+      const ta = $('.segment-text', node);
+      ta.addEventListener('input', e => { b.text = e.target.value; saveProject(); });
+      $('.seg-merge-prev', node).disabled = idx === 0;
+      $('.seg-merge-next', node).disabled = idx === state.canonicalBlocks.length - 1;
+      $('.seg-merge-prev', node).addEventListener('click', () => mergeCanonicalBlocks(idx-1, idx));
+      $('.seg-merge-next', node).addEventListener('click', () => mergeCanonicalBlocks(idx, idx+1));
+      $('.seg-split', node).addEventListener('click', () => splitCanonicalBlock(idx, ta.selectionStart));
+      $('.seg-force-break', node).addEventListener('change', e => { b.forceBreak = e.target.checked; saveProject(); });
+      els.segmentationList.appendChild(node);
+    });
+    requestAnimationFrame(()=>els.segmentationReview.scrollIntoView({behavior:'smooth', block:'start'}));
+  }
+
+  function mergeCanonicalBlocks(leftIndex, rightIndex) {
+    if (leftIndex < 0 || rightIndex >= state.canonicalBlocks.length || leftIndex >= rightIndex) return;
+    const a = state.canonicalBlocks[leftIndex], b = state.canonicalBlocks[rightIndex];
+    a.text = smartJoin(a.text, b.text);
+    a.end = b.end; a.endRaw = b.endRaw;
+    a.sourceCueIds = [...(a.sourceCueIds||[]), ...(b.sourceCueIds||[])];
+    a.forceBreak = a.forceBreak || b.forceBreak;
+    state.canonicalBlocks.splice(rightIndex, 1);
+    state.canonicalBlocks.forEach((x,i)=>x.oldIndex=i);
+    saveProject(); renderSegmentationReview();
+  }
+
+  function splitCanonicalBlock(index, cursor) {
+    const b = state.canonicalBlocks[index]; if (!b) return;
+    const pos = Number(cursor);
+    if (!Number.isFinite(pos) || pos <= 0 || pos >= b.text.length) return alert('請先把文字游標放在想拆分的位置，再按「從游標拆分」。');
+    const left = b.text.slice(0,pos).trim(), right = b.text.slice(pos).trim();
+    if (!left || !right) return;
+    const startSec=timeToSeconds(b.startRaw), endSec=timeToSeconds(b.endRaw);
+    const splitSec=startSec+(endSec-startSec)*(left.length/(left.length+right.length));
+    const mid=formatLikeTime(b.startRaw,splitSec);
+    const originalEndRaw=b.endRaw, originalEnd=b.end;
+    b.text=left; b.endRaw=mid; b.end=splitSec;
+    const next={...clone(b), id:uid(), text:right, startRaw:mid, start:splitSec, endRaw:originalEndRaw, end:originalEnd, forceBreak:false};
+    state.canonicalBlocks.splice(index+1,0,next);
+    state.canonicalBlocks.forEach((x,i)=>x.oldIndex=i);
+    saveProject(); renderSegmentationReview();
   }
 
   function parseSubtitle(raw) {
@@ -451,7 +524,7 @@
       id: uid(), status:data.status||'unchanged', similarity:data.similarity ?? 1,
       oldIndex:data.oldIndex ?? null, newIndex:data.newIndex ?? null,
       startRaw:data.startRaw||'', endRaw:data.endRaw||'', oldStartRaw:data.oldStartRaw||'', oldEndRaw:data.oldEndRaw||'',
-      text:data.text||'', oldText:data.oldText||'', compareText:data.compareText||'', textSource:data.textSource||'A', timeSource:data.timeSource||'A', requirements:[], links:[], images:[], forceBreak:false
+      type:data.type||'script', text:data.text||'', oldText:data.oldText||'', compareText:data.compareText||'', textSource:data.textSource||'A', timeSource:data.timeSource||'A', requirements:[], links:[], images:[], forceBreak:!!data.forceBreak, anchorTime:Number.isFinite(data.anchorTime)?data.anchorTime:null
     };
     if (autoReq) b.requirements.push(...autoRequirementsFor(b));
     return b;
@@ -481,14 +554,40 @@
   function diceCoefficient(a,b){ if(a.length<2||b.length<2)return a===b?1:0; const map=new Map(); for(let i=0;i<a.length-1;i++){const g=a.slice(i,i+2);map.set(g,(map.get(g)||0)+1);} let hit=0; for(let i=0;i<b.length-1;i++){const g=b.slice(i,i+2),c=map.get(g)||0;if(c){hit++;map.set(g,c-1);}} return 2*hit/((a.length-1)+(b.length-1)); }
   function longestIncreasingSubsequenceIndices(arr){ const tails=[],tailsIdx=[],prev=new Array(arr.length).fill(-1); for(let i=0;i<arr.length;i++){let l=0,r=tails.length;while(l<r){const mid=(l+r)>>1;if(tails[mid]<arr[i])l=mid+1;else r=mid;} if(l>0)prev[i]=tailsIdx[l-1]; tails[l]=arr[i]; tailsIdx[l]=i;} const out=[]; let k=tailsIdx[tails.length-1]; while(k!=null&&k>=0){out.push(k);k=prev[k];} return out.reverse(); }
 
+  function canonicalSortKey(b) {
+    if (b.type === 'manual') return Number.isFinite(b.anchorTime) ? b.anchorTime : Number.MAX_SAFE_INTEGER - 10;
+    const canonicalRaw = b.oldStartRaw || (b.timeSource === 'A' ? b.startRaw : '');
+    if (canonicalRaw) return timeToSeconds(canonicalRaw);
+    if (b.oldIndex != null) return b.oldIndex * 1000;
+    // B-only 疑似新增無可靠 A 時間，排在既有 A 時間軸後方，避免打亂正式字幕順序。
+    return Number.MAX_SAFE_INTEGER - 100000 + timeToSeconds(b.startRaw || '');
+  }
+
+  function sortBlocksChronologically(blocks) {
+    return [...(blocks||[])].map((b,i)=>({b,i,k:canonicalSortKey(b)})).sort((x,y)=>x.k-y.k || x.i-y.i).map(x=>x.b);
+  }
+
+  function insertManualPage(afterIndex) {
+    const after = state.blocks[afterIndex];
+    let anchor = after ? canonicalSortKey(after) + 0.0001 : 0;
+    if (!after && state.blocks.length) anchor = canonicalSortKey(state.blocks[state.blocks.length-1]) + 0.0001;
+    const b = makeEditorBlock({type:'manual', status:'manual', text:'', textSource:'A', timeSource:'manual', forceBreak:true, anchorTime:anchor}, false);
+    b.requirements.push({id:uid(), cat:'其他', text:'新增頁面需求'});
+    state.blocks.splice(Math.max(0, afterIndex+1), 0, b);
+    state.blocks = sortBlocksChronologically(state.blocks);
+    saveProject(); renderAll();
+  }
+
   function renderAll() {
+    state.stage = 'edit';
+    els.segmentationReview.classList.add('hidden');
     els.results.classList.remove('hidden');
     renderSummary(); renderGlobals(); renderBlocks(); updatePageEstimate();
   }
 
   function renderSummary() {
     const counts = Object.fromEntries(Object.keys(STATUS_META).map(k=>[k,0]));
-    state.blocks.forEach(b=>counts[b.status]=(counts[b.status]||0)+1);
+    state.blocks.forEach(b=>{ if(b.type!=='manual') counts[b.status]=(counts[b.status]||0)+1; });
     const ordered = ['removed','added','moved','uncertain','unchanged'];
     els.summaryChips.innerHTML = ordered.map(k => `<div class="summary-chip"><strong>${counts[k]||0}</strong><span>${STATUS_META[k].label}</span></div>`).join('');
     els.filterRow.innerHTML = `<button class="filter-chip ${activeFilter==='all'?'active':''}" data-filter="all">全部</button>` + ordered.map(k=>`<button class="filter-chip ${activeFilter===k?'active':''}" data-filter="${k}">${STATUS_META[k].label}</button>`).join('');
@@ -517,19 +616,27 @@
       const node=$('#blockTemplate').content.firstElementChild.cloneNode(true);
       const meta=STATUS_META[b.status]||STATUS_META.unchanged;
       const pill=$('.status-pill',node); pill.textContent=meta.label; pill.className=`status-pill ${meta.cls}`;
-      const parts=[]; if(b.oldIndex!=null)parts.push(`字幕 A #${b.oldIndex+1}`); if(b.newIndex!=null)parts.push(`新版位置 #${b.newIndex+1}`); if(b.similarity && b.status!=='unchanged')parts.push(`比對相似度 ${Math.round(b.similarity*100)}%`); if(b.textSource==='A')parts.push('文字以 A 為準');
-      $('.position-meta',node).textContent=parts.join(' · ');
-      const timeLabel=b.timeSource==='B'?'新版時間':'原始時間';
-      $('.time-row',node).textContent=`${timeLabel}｜${b.startRaw||'—'} → ${b.endRaw||'—'}`;
-      const ta=$('.script-text',node); ta.value=b.text; if(b.status==='removed')ta.classList.add('deleted');
+      const parts=[]; if(b.oldIndex!=null)parts.push(`字幕 A #${b.oldIndex+1}`); if(b.newIndex!=null)parts.push(`新版位置 #${b.newIndex+1}`); if(b.similarity && b.status!=='unchanged' && b.type!=='manual')parts.push(`比對相似度 ${Math.round(b.similarity*100)}%`); if(b.textSource==='A' && b.type!=='manual')parts.push('文字以 A 為準');
+      $('.position-meta',node).textContent=b.type==='manual'?'手動插入的獨立頁面':parts.join(' · ');
+      const timeRow=$('.time-row',node);
+      if(b.type==='manual'){ timeRow.textContent='獨立新增頁｜不綁時間碼'; }
+      else if(b.timeSource==='B' && b.oldStartRaw){ timeRow.textContent=`字幕 A｜${b.oldStartRaw} → ${b.oldEndRaw||'—'}　／　新版 B｜${b.startRaw||'—'} → ${b.endRaw||'—'}`; }
+      else { timeRow.textContent=`字幕 A｜${b.startRaw||'—'} → ${b.endRaw||'—'}`; }
+      const ta=$('.script-text',node); ta.value=b.text; ta.placeholder=b.type==='manual'?'輸入這一頁要補充的說明／需求標題…':'台詞'; if(b.status==='removed')ta.classList.add('deleted');
       ta.addEventListener('input',e=>{b.text=e.target.value;saveProject();updatePageEstimate();});
       if(b.compareText && b.textSource==='A' && norm(b.compareText)!==norm(b.text) && (b.status==='uncertain' || b.similarity < .90)){ const wrap=$('.compare-text-wrap',node);wrap.classList.remove('hidden');$('.compare-text',wrap).textContent=b.compareText; }
       const force=$('.force-break',node);force.checked=!!b.forceBreak;force.addEventListener('change',e=>{b.forceBreak=e.target.checked;saveProject();updatePageEstimate();});
-      $('.merge-prev',node).disabled = idx===0;
-      $('.merge-next',node).disabled = idx===state.blocks.length-1;
-      $('.merge-prev',node).addEventListener('click',()=>mergeEditorBlocks(idx-1,idx));
-      $('.merge-next',node).addEventListener('click',()=>mergeEditorBlocks(idx,idx+1));
-      $('.split-here',node).addEventListener('click',()=>splitEditorBlock(idx,ta.selectionStart));
+      if(b.type==='manual'){
+        $('.merge-prev',node).classList.add('hidden'); $('.merge-next',node).classList.add('hidden'); $('.split-here',node).classList.add('hidden');
+        force.checked=true; force.disabled=true; $('.break-toggle',node).title='自訂頁固定會另起一頁';
+      } else {
+        $('.merge-prev',node).disabled = idx===0 || state.blocks[idx-1]?.type==='manual';
+        $('.merge-next',node).disabled = idx===state.blocks.length-1 || state.blocks[idx+1]?.type==='manual';
+        $('.merge-prev',node).addEventListener('click',()=>mergeEditorBlocks(idx-1,idx));
+        $('.merge-next',node).addEventListener('click',()=>mergeEditorBlocks(idx,idx+1));
+        $('.split-here',node).addEventListener('click',()=>splitEditorBlock(idx,ta.selectionStart));
+      }
+      $('.insert-page-after',node).addEventListener('click',()=>insertManualPage(idx));
       renderPresetChips(node,b,idx); renderRequirements(node,b); renderLinks(node,b); renderImages(node,b);
       $('.add-custom-req',node).addEventListener('click',()=>{const input=$('.custom-req-input',node);const v=input.value.trim();if(!v)return;b.requirements.push({id:uid(),cat:'其他',text:v});input.value='';saveProject();renderBlocks();});
       $('.custom-req-input',node).addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();$('.add-custom-req',node).click();}});
@@ -543,6 +650,7 @@
   function mergeEditorBlocks(leftIndex, rightIndex) {
     if (leftIndex < 0 || rightIndex >= state.blocks.length || leftIndex >= rightIndex) return;
     const a = state.blocks[leftIndex], b = state.blocks[rightIndex];
+    if (a.type==='manual' || b.type==='manual') return;
     a.text = smartJoin(a.text, b.text);
     a.endRaw = b.endRaw || a.endRaw;
     a.requirements.push(...(b.requirements || []));
@@ -555,7 +663,7 @@
   }
 
   function splitEditorBlock(index, cursor) {
-    const b = state.blocks[index]; if (!b) return;
+    const b = state.blocks[index]; if (!b || b.type==='manual') return;
     const pos = Number(cursor);
     if (!Number.isFinite(pos) || pos <= 0 || pos >= b.text.length) return alert('請先把文字游標放在想拆分的位置，再按「從游標拆分」。');
     const left = b.text.slice(0,pos).trim(), right = b.text.slice(pos).trim();
@@ -598,19 +706,20 @@
     const pages=[]; let cur={blocks:[],units:0};
     const push=()=>{if(cur.blocks.length){pages.push(cur);cur={blocks:[],units:0};}};
     if(state.globalRequirements.some(Boolean)) pages.push({global:true,blocks:[],units:3});
-    state.blocks.forEach(b=>{
+    const ordered = sortBlocksChronologically(state.blocks);
+    ordered.forEach(b=>{
+      if(b.type==='manual') { push(); pages.push({manual:true, blocks:[b], units:Math.max(4, estimateUnits(b))}); return; }
       const units=estimateUnits(b);
-      if(b.forceBreak) push();
+      if(b.forceBreak && cur.blocks.length) push();
       if(cur.blocks.length && cur.units+units>cap) push();
       cur.blocks.push(b);cur.units+=units;
     }); push(); return pages;
   }
-
-  function estimateUnits(b){let u=.8;u+=Math.min(2.4,b.text.length/38*.75);u+=b.requirements.length*.52;u+=b.links.length*.28;if(b.images.length)u+=1.05+Math.min(1,b.images.length*.25);if(b.compareText&&b.textSource==='A'&&norm(b.compareText)!==norm(b.text)&&b.similarity<.90)u+=.55;return Math.max(1.35,u);}
+  function estimateUnits(b){if(b.type==='manual'){let mu=2.0+Math.min(2.8,(b.text||'').length/34)+b.requirements.length*.55+b.links.length*.3+(b.images.length?1.2:0);return Math.max(3.6,mu);}let u=.8;u+=Math.min(2.4,b.text.length/38*.75);u+=b.requirements.length*.52;u+=b.links.length*.28;if(b.images.length)u+=1.05+Math.min(1,b.images.length*.25);if(b.compareText&&b.textSource==='A'&&norm(b.compareText)!==norm(b.text)&&b.similarity<.90)u+=.55;return Math.max(1.35,u);}
   function updatePageEstimate(){if(!state.blocks.length){els.pageEstimate.textContent='尚未計算';return;}const pages=getPages();els.pageEstimate.innerHTML=`預估 <strong>${pages.length}</strong> 頁<br><span style="font-weight:400;color:#6f7a95">依「${state.density==='compact'?'緊湊':state.density==='relaxed'?'舒適':'標準'}」密度自動分頁</span>`;}
 
   function openPreviewModal(){renderSlidePreview();els.previewModal.classList.remove('hidden');}
-  function renderSlidePreview(){const pages=getPages();els.slidePreview.innerHTML='';pages.forEach((p,i)=>{const card=document.createElement('div');card.className='slide-card';if(p.global){card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)}</h4><div class="slide-block"><strong>整支影片需求</strong><span>${state.globalRequirements.filter(Boolean).map(escapeHtml).join('／')}</span></div>`;}else{card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · P${i+1}</h4>`+p.blocks.map(b=>`<div class="slide-block ${b.status==='removed'?'red':''}"><strong>${STATUS_META[b.status].label} · ${escapeHtml(b.startRaw)}–${escapeHtml(b.endRaw)}</strong><span>${escapeHtml(b.text)}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`).join('');}els.slidePreview.appendChild(card);});}
+  function renderSlidePreview(){const pages=getPages();els.slidePreview.innerHTML='';pages.forEach((p,i)=>{const card=document.createElement('div');card.className='slide-card';if(p.global){card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)}</h4><div class="slide-block"><strong>整支影片需求</strong><span>${state.globalRequirements.filter(Boolean).map(escapeHtml).join('／')}</span></div>`;}else if(p.manual){const b=p.blocks[0];card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · 自訂新增頁</h4><div class="slide-block manual"><strong>自訂頁面</strong><span>${escapeHtml(b.text||'（尚未輸入說明）')}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`;}else{card.innerHTML=`<h4>/ ${escapeHtml(state.projectName)} - ${escapeHtml(state.versionName)} · P${i+1}</h4>`+p.blocks.map(b=>`<div class="slide-block ${b.status==='removed'?'red':''}"><strong>${STATUS_META[b.status].label} · ${escapeHtml(b.oldStartRaw||b.startRaw)}–${escapeHtml(b.oldEndRaw||b.endRaw)}</strong><span>${escapeHtml(b.text)}${b.requirements.length?'｜'+escapeHtml(b.requirements.map(r=>r.text).join('；')):''}</span></div>`).join('');}els.slidePreview.appendChild(card);});}
 
   async function exportPptx(){
     if(!state.blocks.length)return alert('請先解析字幕。');
@@ -624,6 +733,7 @@
     pages.forEach((p,pageIdx)=>{
       const sl=pptx.addSlide();sl.background={color:C.bg};addEdgeMesh(sl,pptx,C);addPptTitle(sl,C,`${state.projectName} - ${state.versionName}`);
       if(p.global){sl.addText('整支影片需求',{x:.72,y:1.35,w:2.2,h:.36,fontFace:'Noto Sans TC',fontSize:16,bold:true,color:C.ink,margin:0});let y=1.95;state.globalRequirements.filter(Boolean).forEach((r,i)=>{sl.addShape(pptx.ShapeType.roundRect,{x:.72,y,w:9.9,h:.68,rectRadius:.06,fill:{color:'FFFFFF'},line:{color:C.line}});sl.addText(`${i+1}. ${r}`,{x:.95,y:y+.2,w:9.35,h:.26,fontFace:'Noto Sans TC',fontSize:11,color:C.text,margin:0});y+=.82;});return;}
+      if(p.manual){addPptManualPage(sl,pptx,C,p.blocks[0]);return;}
       const n=p.blocks.length;let y=1.18;const avail=5.7;const gap=.13;const heights=p.blocks.map(b=>Math.max(.9,estimateUnits(b)/p.units*(avail-gap*(n-1))));
       p.blocks.forEach((b,bi)=>{const h=Math.max(.85,heights[bi]);addPptBlock(sl,pptx,C,b,.72,y,10.45,h);y+=h+gap;});
     });
@@ -631,12 +741,23 @@
     await pptx.writeFile({fileName:`${safe}_${state.versionName||''}_影音需求.pptx`});
   }
 
+  function addPptManualPage(sl,pptx,C,b){
+    sl.addShape(pptx.ShapeType.roundRect,{x:.72,y:1.32,w:10.3,h:4.95,rectRadius:.05,fill:{color:'FFFFFF'},line:{color:C.line,width:.8}});
+    sl.addShape(pptx.ShapeType.rect,{x:.72,y:1.5,w:.065,h:4.55,fill:{color:C.blue},line:{color:C.blue}});
+    sl.addText('自訂新增頁',{x:.98,y:1.55,w:1.5,h:.28,fontFace:'Noto Sans TC',fontSize:11,bold:true,color:C.blue2,margin:0});
+    sl.addText(b.text||'新增頁面需求',{x:.98,y:2.0,w:8.95,h:.75,fontFace:'Noto Sans TC',fontSize:20,bold:true,color:C.ink,margin:0.02});
+    let y=3.0;
+    (b.requirements||[]).forEach((r,i)=>{sl.addText('• '+r.text,{x:1.02,y,w:8.7,h:.3,fontFace:'Noto Sans TC',fontSize:10,color:r.cat==='移除'?C.red:C.text,margin:0});y+=.42;});
+    (b.links||[]).slice(0,4).forEach(l=>{sl.addText([{text:'↗ '+(l.label||'REF'),options:{hyperlink:{url:l.url},color:C.blue2,underline:{color:C.blue2}}}],{x:1.02,y,w:8.7,h:.25,fontFace:'Noto Sans TC',fontSize:9,margin:0});y+=.34;});
+    if((b.images||[]).length){try{sl.addImage({data:b.images[0].data,x:9.2,y:2.0,w:1.55,h:1.8});}catch(_){}}
+  }
+
   function addPptTitle(sl,C,title){sl.addText('/ '+title,{x:.68,y:.42,w:9.8,h:.42,fontFace:'Noto Sans TC',fontSize:23,bold:true,color:C.blue,margin:0});sl.addText('AUTO VIDEO BRIEF',{x:10.5,y:.52,w:1.6,h:.18,fontFace:'Noto Sans TC',fontSize:7,color:C.muted,charSpacing:1.2,align:'right',margin:0});}
   function addPptBlock(sl,pptx,C,b,x,y,w,h){
     const red=b.status==='removed';sl.addShape(pptx.ShapeType.roundRect,{x,y,w,h,rectRadius:.05,fill:{color:'FFFFFF'},line:{color:C.line,width:.8}});sl.addShape(pptx.ShapeType.rect,{x,y:y+.14,w:.055,h:Math.max(.22,h-.28),fill:{color:red?C.red:C.blue},line:{color:red?C.red:C.blue}});
     const meta=STATUS_META[b.status]||STATUS_META.unchanged; const statusColor=b.status==='removed'?C.red:b.status==='added'?C.green:b.status.includes('moved')?C.purple:b.status==='modified'?C.orange:'7C879E';
     sl.addShape(pptx.ShapeType.roundRect,{x:x+.2,y:y+.16,w:.88,h:.25,rectRadius:.05,fill:{color:statusColor},line:{color:statusColor}});sl.addText(meta.label,{x:x+.2,y:y+.215,w:.88,h:.1,fontFace:'Noto Sans TC',fontSize:6.2,bold:true,color:'FFFFFF',align:'center',margin:0});
-    sl.addText(`${b.startRaw} → ${b.endRaw}`,{x:x+1.22,y:y+.2,w:2.55,h:.13,fontFace:'Noto Sans TC',fontSize:7.2,bold:true,color:C.blue2,margin:0});
+    sl.addText(`${b.oldStartRaw||b.startRaw} → ${b.oldEndRaw||b.endRaw}`,{x:x+1.22,y:y+.2,w:2.55,h:.13,fontFace:'Noto Sans TC',fontSize:7.2,bold:true,color:C.blue2,margin:0});
     const reqCount=b.requirements.length, linkCount=b.links.length, imgCount=b.images.length; const textH=Math.max(.27,Math.min(.62,h*.32));
     sl.addText(`「${b.text}」`,{x:x+.22,y:y+.5,w:imgCount?7.2:9.8,h:textH,fontFace:'Noto Sans TC',fontSize:h<1.15?9.2:10.4,bold:true,color:red?C.red:C.ink,margin:0.03,breakLine:false,strike:red});
     let ry=y+.5+textH+.08; const rw=imgCount?7.25:9.85; const lineH=.22;
@@ -656,16 +777,16 @@
   function closeModal(id){$('#'+id)?.classList.add('hidden');}
 
   function exportProject(){syncProjectMeta();state.oldRaw=els.oldPaste.value;state.newRaw=els.newPaste.value;const blob=new Blob([JSON.stringify(state,null,2)],{type:'application/json'});downloadBlob(blob,`${safeName(state.projectName)}_${state.versionName||''}_project.json`);}
-  function importProject(e){const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{try{state=JSON.parse(reader.result);hydrateTopFields();renderAll();saveProject();}catch(_){alert('專案 JSON 格式無法讀取。');}};reader.readAsText(file);e.target.value='';}
+  function importProject(e){const file=e.target.files?.[0];if(!file)return;const reader=new FileReader();reader.onload=()=>{try{state=JSON.parse(reader.result);hydrateTopFields();if(state.stage==='review'&&state.canonicalBlocks?.length)renderSegmentationReview();else renderAll();saveProject();}catch(_){alert('專案 JSON 格式無法讀取。');}};reader.readAsText(file);e.target.value='';}
   function loadDemo(){
     const old=`00:00:00:00 - 00:00:03:00\n今天先介紹第一個重點\n\n00:00:03:00 - 00:00:06:00\n這一段我們之後會移除\n\n00:00:06:00 - 00:00:09:00\n接著談第二個重點\n\n00:00:09:00 - 00:00:12:00\n最後補充第三個重點`;
     const newer=`00:00:00:00 - 00:00:03:00\n今天先介紹第一個重點\n\n00:00:03:00 - 00:00:06:00\n最後補充第三個重點\n\n00:00:06:00 - 00:00:09:00\n接著談第二個重要觀念\n\n00:00:09:00 - 00:00:12:00\n這是重剪後新增的一句話`;
     els.oldPaste.value=old;els.newPaste.value=newer;state.oldName='demo_original.txt';state.newName='demo_recut.txt';els.oldBadge.textContent=state.oldName;els.newBadge.textContent=state.newName;analyze();
   }
-  function clearProject(){if(!confirm('確定要清空目前專案嗎？'))return;state=newProject();localStorage.removeItem(STORAGE_KEY);hydrateTopFields();els.blocks.innerHTML='';els.results.classList.add('hidden');activeFilter='all';}
+  function clearProject(){if(!confirm('確定要清空目前專案嗎？'))return;state=newProject();localStorage.removeItem(STORAGE_KEY);hydrateTopFields();els.blocks.innerHTML='';els.results.classList.add('hidden');els.segmentationReview.classList.add('hidden');activeFilter='all';}
 
   function saveProject(){state.updatedAt=Date.now();try{const raw=JSON.stringify(state);if(raw.length<4_500_000)localStorage.setItem(STORAGE_KEY,raw);else{const light=clone(state);light.blocks?.forEach(b=>b.images=[]);localStorage.setItem(STORAGE_KEY,JSON.stringify(light));}}catch(e){console.warn('autosave skipped',e);}}
-  function loadProject(){try{const raw=localStorage.getItem(STORAGE_KEY);return raw?JSON.parse(raw):null;}catch(_){return null;}}
+  function loadProject(){try{let raw=localStorage.getItem(STORAGE_KEY);if(!raw){for(const key of LEGACY_STORAGE_KEYS){raw=localStorage.getItem(key);if(raw)break;}}return raw?JSON.parse(raw):null;}catch(_){return null;}}
 
   function fileToDataURL(file){return new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(r.result);r.onerror=reject;r.readAsDataURL(file);});}
   function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000);}
