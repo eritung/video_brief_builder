@@ -1,12 +1,12 @@
-/* Video Brief Builder V2.0 - browser-only prototype */
+/* Video Brief Builder V2.1 - browser-only prototype */
 (() => {
   'use strict';
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const STORAGE_KEY = 'videoBriefBuilderV20Project';
-  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV19Project','videoBriefBuilderV18Project','videoBriefBuilderV17Project','videoBriefBuilderV16Project','videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
-  const PRESET_KEY = 'videoBriefBuilderV20Presets';
+  const STORAGE_KEY = 'videoBriefBuilderV21Project';
+  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV20Project','videoBriefBuilderV19Project','videoBriefBuilderV18Project','videoBriefBuilderV17Project','videoBriefBuilderV16Project','videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
+  const PRESET_KEY = 'videoBriefBuilderV21Presets';
 
   const STATUS_META = {
     unchanged: { label: '未變更', cls: 'status-unchanged' },
@@ -135,7 +135,7 @@
   }
 
   function newProject() {
-    return { version: 1.8, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
+    return { version: 2.1, projectName: '影音需求', versionName: 'ACO', density: 'standard', mergeMode: 'standard', oldRaw: '', newRaw: '', oldName: '', newName: '', canonicalBlocks: [], blocks: [], stage: 'upload', globalRequirements: [], autoRequirements: true, createdAt: Date.now(), updatedAt: Date.now() };
   }
 
 
@@ -187,14 +187,14 @@
     state.density = els.densitySelect.value;
     state.autoRequirements = els.autoReq.checked;
     if (!state.oldRaw) return alert('請先匯入影音夥伴提供的字幕 A，作為文字校正基準。');
-    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V2.0 會先移除時間軸、用純文本比對 A/B，再回填 A 時間碼。');
+    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V2.1 會先移除時間軸、用純文本比對 A/B，再回填 A 時間碼。');
 
     const oldCues = parseSubtitle(state.oldRaw);
     const newCues = parseSubtitle(state.newRaw);
     if (!oldCues.length) return alert('字幕 A 沒有讀到時間碼。請確認格式是否包含起訖時間。');
     if (!newCues.length) return alert('字幕 B 沒有讀到時間碼。請確認格式是否包含起訖時間。');
 
-    // V2.0 Text-first / Time-later:
+    // V2.1 Text-first / Time-later:
     // 先把 A/B 都視為純文本流比對，不用原始 cue 分段判斷移除。
     // Step 3 顯示的是「用 A 校正後、符合 B 剪輯結果」的文字；確認後才回填 A 時間碼產出需求。
     state.canonicalBlocks = buildTextFirstReviewBlocks(oldCues, newCues, state.mergeMode);
@@ -481,7 +481,7 @@
 
 
   // ==============================
-  // V2.0 Text-first / Time-later core
+  // V2.1 Text-first / Time-later core
   // ==============================
 
   function buildTextFirstReviewBlocks(oldCues, newCues, mode='standard') {
@@ -504,9 +504,9 @@
     return bBlocks.map((b, bi) => {
       const m = findBestRangeInAFlow(aFlow, b.compareText || b.text, {preferExpanded:true});
       const out = {...b, aPreview:'', aMatchScore:m?.score || 0};
-      if (!m || m.score < .46) return out;
+      if (!matchPassesConfidence(m, .34)) return out;
       const analysis = analyzeAtoBText(m.aText, out.compareText || out.text, textContext);
-      const shouldApply = analysis.safeToApply || analysis.isPartial || analysis.hasBoundaryDiff || m.score >= .54;
+      const shouldApply = analysis.safeToApply || analysis.isPartial || analysis.hasBoundaryDiff || matchPassesConfidence(m, .34);
       if (shouldApply) {
         out.text = analysis.displayText || m.displayText || m.aText;
         out.aText = m.aText;
@@ -584,29 +584,38 @@
     const bNorm = bArr.map(x=>x.ch).join('');
     if (!bNorm || !aFlow?.norm) return null;
     const aNorm = aFlow.norm;
-    let best = null;
+    const candidates = [];
+    const bestByKey = new Map();
+
+    function consider(c) {
+      if (!c || !Number.isFinite(c.score)) return;
+      const key = `${c.aGroupStart}-${c.aGroupEnd}`;
+      const prev = bestByKey.get(key);
+      if (!prev || c.score > prev.score || (Math.abs(c.score-prev.score)<.001 && (c.aNormEnd-c.aNormStart) < (prev.aNormEnd-prev.aNormStart))) bestByKey.set(key, c);
+    }
 
     let idx = aNorm.indexOf(bNorm);
     while (idx >= 0) {
-      const c = candidateFromNormRange(aFlow, idx, idx + bNorm.length, bNorm, 1, options);
-      if (!best || c.score > best.score || (c.score === best.score && c.aNormEnd-c.aNormStart < best.aNormEnd-best.aNormStart)) best = c;
+      consider(candidateFromNormRange(aFlow, idx, idx + bNorm.length, bNorm, 1, options));
       idx = aNorm.indexOf(bNorm, idx + 1);
     }
-    if (best && best.score >= .98) return best;
 
     const bLen = bNorm.length;
     const windows = [...new Set([
+      Math.max(2, Math.round(bLen * .60)),
       Math.max(2, Math.round(bLen * .72)),
-      Math.max(2, bLen - 6),
+      Math.max(2, bLen - 8),
+      Math.max(2, bLen - 4),
       bLen,
       bLen + 6,
       bLen + 16,
       Math.round(bLen * 1.35),
-      Math.round(bLen * 1.65)
+      Math.round(bLen * 1.65),
+      Math.round(bLen * 2.05)
     ].map(x => Math.max(2, Math.min(aNorm.length, x))))].sort((a,b)=>a-b);
 
     // Prefer starts near characters that appear in the B text. This keeps long transcripts responsive.
-    const bChars = new Set(bNorm.slice(0, Math.min(6, bNorm.length)).split(''));
+    const bChars = new Set(bNorm.slice(0, Math.min(10, bNorm.length)).split(''));
     const starts = [];
     for (let i=0; i<aNorm.length; i++) {
       if (bChars.has(aNorm[i]) || i % 3 === 0) starts.push(i);
@@ -616,12 +625,21 @@
         if (start + w > aNorm.length) continue;
         const seg = aNorm.slice(start, start + w);
         const score = textSimilarityNorm(seg, bNorm);
-        if (score < .42) continue;
-        const c = candidateFromNormRange(aFlow, start, start + w, bNorm, score, options);
-        if (!best || c.score > best.score || (Math.abs(c.score-best.score)<.001 && Math.abs((c.aNormEnd-c.aNormStart)-bLen) < Math.abs((best.aNormEnd-best.aNormStart)-bLen))) best = c;
+        if (score < .30) continue;
+        consider(candidateFromNormRange(aFlow, start, start + w, bNorm, score, options));
       }
     }
-    return best && best.score >= .44 ? best : null;
+
+    candidates.push(...bestByKey.values());
+    if (!candidates.length) return null;
+    candidates.sort((a,b) => b.score - a.score || Math.abs((a.aNormEnd-a.aNormStart)-bLen) - Math.abs((b.aNormEnd-b.aNormStart)-bLen));
+    const best = candidates[0];
+    const second = candidates.find(c => Math.abs(c.aNormStart-best.aNormStart) > 8 || Math.abs(c.aNormEnd-best.aNormEnd) > 8 || c.aGroupStart !== best.aGroupStart || c.aGroupEnd !== best.aGroupEnd);
+    best.secondScore = second?.score || 0;
+    best.margin = best.score - best.secondScore;
+    best.clearBest = best.score >= .34 && (best.margin >= .095 || best.score >= .72 || !second);
+    best.ambiguous = !!second && best.margin < .055 && best.score < .72;
+    return (best.score >= .34 || best.clearBest) ? best : null;
   }
 
   function candidateFromNormRange(aFlow, start, end, bNorm, score, options={}) {
@@ -705,6 +723,57 @@
     };
   }
 
+  function matchPassesConfidence(m, floor=.34) {
+    if (!m) return false;
+    if (m.score >= .50) return true;
+    if (m.clearBest && m.score >= floor) return true;
+    // In this workflow A and B are versions of the same script; a uniquely best candidate should be trusted more than a fixed absolute score.
+    return m.score >= .40 && (m.margin || 0) >= .075;
+  }
+
+  function sourceRangesNear(aFlow, a, b, opts={}) {
+    if (!a || !b) return false;
+    const maxGroupGap = opts.maxGroupGap ?? 1;
+    const maxTimeGap = opts.maxTimeGap ?? 6.5;
+    const aStart = Math.min(a.aGroupStart ?? 0, a.aGroupEnd ?? a.aGroupStart ?? 0);
+    const aEnd = Math.max(a.aGroupStart ?? 0, a.aGroupEnd ?? a.aGroupStart ?? 0);
+    const bStart = Math.min(b.aGroupStart ?? 0, b.aGroupEnd ?? b.aGroupStart ?? 0);
+    const bEnd = Math.max(b.aGroupStart ?? 0, b.aGroupEnd ?? b.aGroupStart ?? 0);
+    const groupGap = bStart > aEnd ? bStart - aEnd - 1 : aStart > bEnd ? aStart - bEnd - 1 : 0;
+    if (groupGap <= maxGroupGap) return true;
+    const gA0 = aFlow.groups[aStart] || null;
+    const gA1 = aFlow.groups[aEnd] || gA0;
+    const gB0 = aFlow.groups[bStart] || null;
+    const gB1 = aFlow.groups[bEnd] || gB0;
+    if (!gA0 || !gB0) return false;
+    const aEndSec = timeToSeconds(gA1?.endRaw || gA1?.startRaw || '');
+    const aStartSec = timeToSeconds(gA0?.startRaw || '');
+    const bEndSec = timeToSeconds(gB1?.endRaw || gB1?.startRaw || '');
+    const bStartSec = timeToSeconds(gB0?.startRaw || '');
+    const gap = bStartSec > aEndSec ? bStartSec - aEndSec : aStartSec > bEndSec ? aStartSec - bEndSec : 0;
+    return Number.isFinite(gap) && gap <= maxTimeGap;
+  }
+
+  function sourceRangeTimeSpan(aFlow, m) {
+    if (!m) return 0;
+    const g0 = aFlow.groups[Math.min(m.aGroupStart ?? 0, m.aGroupEnd ?? m.aGroupStart ?? 0)] || null;
+    const g1 = aFlow.groups[Math.max(m.aGroupStart ?? 0, m.aGroupEnd ?? m.aGroupStart ?? 0)] || g0;
+    const s = timeToSeconds(g0?.startRaw || '');
+    const e = timeToSeconds(g1?.endRaw || g1?.startRaw || '');
+    return Math.max(0, e - s);
+  }
+
+  function isNearSourceIntegration(aFlow, matched, pos) {
+    const m = matched[pos];
+    if (!m) return false;
+    const prev = pos > 0 ? matched[pos-1] : null;
+    const next = pos < matched.length-1 ? matched[pos+1] : null;
+    if (sourceRangesNear(aFlow, prev, m) || sourceRangesNear(aFlow, m, next)) return true;
+    const groupSpan = Math.abs((m.aGroupEnd ?? 0) - (m.aGroupStart ?? 0));
+    if (groupSpan <= 1 && sourceRangeTimeSpan(aFlow, m) <= 8) return true;
+    return false;
+  }
+
   function textSimilarityNorm(x, y) {
     if (!x || !y) return 0;
     if (x === y) return 1;
@@ -722,7 +791,7 @@
     (reviewBlocks || []).forEach((bb, bi) => {
       const probe = bb.text || bb.compareText || '';
       const m = findBestRangeInAFlow(aFlow, probe, {preferExpanded:true});
-      if (!m || m.score < .44) {
+      if (!matchPassesConfidence(m, .34)) {
         output.push(makeEditorBlock({
           ...bb,
           text:bb.text,
@@ -773,15 +842,18 @@
     matched.forEach((m, pos) => {
       const outBlock = output.find(b => b.newIndex === m.bi && b.type !== 'manual');
       if (!outBlock) return;
-      const moved = !lis.has(pos);
+      const orderBroken = !lis.has(pos);
+      const localIntegration = orderBroken && isNearSourceIntegration(aFlow, matched, pos);
+      const moved = orderBroken && !localIntegration;
       const partial = !!m.analysis.isPartial;
-      const split = !!m.analysis.hasBoundaryDiff && !partial;
-      outBlock.status = partial ? (moved ? 'moved_partial_removed' : 'partial_removed') : moved ? 'moved' : split ? 'split_difference' : (m.score < .56 ? 'uncertain' : 'unchanged');
+      const split = (!!m.analysis.hasBoundaryDiff && !partial) || localIntegration;
+      outBlock.localIntegration = !!localIntegration;
+      outBlock.status = partial ? (moved ? 'moved_partial_removed' : 'partial_removed') : moved ? 'moved' : split ? 'split_difference' : (!matchPassesConfidence(m, .34) ? 'uncertain' : 'unchanged');
       outBlock.requirements = autoReq ? autoRequirementsFor(outBlock) : outBlock.requirements;
     });
 
     // Any A text range not covered by a matched expanded A range is a real removal candidate.
-    const coverage = matched.filter(m => m.score >= .44).map(m => ({start:m.aNormStart, end:m.aNormEnd}));
+    const coverage = matched.filter(m => matchPassesConfidence(m, .34)).map(m => ({start:m.aNormStart, end:m.aNormEnd}));
     const removedRanges = complementNormRanges(aFlow.normChars.length, coverage)
       .map(r => trimRemovedNormRange(aFlow, r))
       .filter(r => r && r.end > r.start && (r.end-r.start) >= 3);
