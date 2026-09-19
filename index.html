@@ -13,7 +13,7 @@
       <div class="mesh" aria-hidden="true"></div>
       <div class="hero-inner">
         <div>
-          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.7 PROTOTYPE</p>
+          <p class="eyebrow">VIDEO BRIEF BUILDER · V1.9 PROTOTYPE</p>
           <h1>影音需求生成器</h1>
           <p class="hero-copy">先套用字幕 A 的正確文字，再整理 B 的分段與順序；輸出簡報時只描述 A 腳本哪裡要移除、調換或補充。</p>
         </div>
@@ -109,7 +109,7 @@
           <div>
             <p class="eyebrow blue">STEP 03 · SCRIPT REVIEW</p>
             <h2>先用 A 正確文字整理重剪版分段</h2>
-            <p>這一步會先把 B 可對應到 A 的內容替換成 A 的正確文字，再讓你用乾淨台詞整理分段。注音選字時按 Enter 只會確認候選字；選字完成後再按 Enter 才會分段。</p>
+            <p>這一步會先把 B 可對應到 A 的內容替換成 A 的正確文字，再讓你用乾淨台詞整理分段。注音選字時按 Enter 只會確認候選字；選字完成後再按 Enter 才會分段。部分文字會先做全文比對，避免把換行差異誤判成刪字。</p>
             <div class="keyboard-hint"><span><kbd>Enter</kbd> 分段</span><span><kbd>Shift</kbd> + <kbd>Enter</kbd> 同段換行</span><span><kbd>Backspace</kbd> 段首合併</span><span><kbd>⌘/Ctrl</kbd> + <kbd>Enter</kbd> 另起一頁</span><span>中文選字 Enter 不會觸發分段</span></div>
           </div>
           <div class="review-head-actions">
@@ -121,7 +121,7 @@
         </div>
         <div id="segmentationList" class="segmentation-list"></div>
         <div class="review-bottom card">
-          <span>此處顯示的是「B 的順序＋A 校正後文字」。先在這裡整理分段；後面的需求頁會沿用這個結果，匯出簡報時不顯示 B 時間軸。</span>
+          <span>此處顯示的是「B 的順序＋A 校正後文字」。若 A 的某段文字仍存在於 B 其他段落，系統會視為分段差異，不會自動標成移除。</span>
           <button class="btn primary" onclick="document.getElementById('confirmSegmentsBtn').click()">確認分段並進入需求編輯</button>
         </div>
       </section>

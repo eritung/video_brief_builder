@@ -1,12 +1,12 @@
-/* Video Brief Builder V1.8 - browser-only prototype */
+/* Video Brief Builder V1.9 - browser-only prototype */
 (() => {
   'use strict';
 
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const STORAGE_KEY = 'videoBriefBuilderV18Project';
-  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV17Project','videoBriefBuilderV16Project','videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
-  const PRESET_KEY = 'videoBriefBuilderV18Presets';
+  const STORAGE_KEY = 'videoBriefBuilderV19Project';
+  const LEGACY_STORAGE_KEYS = ['videoBriefBuilderV18Project','videoBriefBuilderV17Project','videoBriefBuilderV16Project','videoBriefBuilderV15Project','videoBriefBuilderV14Project','videoBriefBuilderV13Project','videoBriefBuilderV12Project','videoBriefBuilderV11Project'];
+  const PRESET_KEY = 'videoBriefBuilderV19Presets';
 
   const STATUS_META = {
     unchanged: { label: '未變更', cls: 'status-unchanged' },
@@ -18,6 +18,7 @@
     moved_partial_removed: { label: '調換＋部分移除', cls: 'status-moved_partial_removed' },
     moved_modified: { label: '調換＋文字修改', cls: 'status-moved_modified' },
     uncertain: { label: '需確認', cls: 'status-uncertain' },
+    split_difference: { label: '分段差異', cls: 'status-split_difference' },
     manual: { label: '自訂頁', cls: 'status-manual' },
   };
 
@@ -186,14 +187,14 @@
     state.density = els.densitySelect.value;
     state.autoRequirements = els.autoReq.checked;
     if (!state.oldRaw) return alert('請先匯入影音夥伴提供的字幕 A，作為文字校正基準。');
-    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.8 會先用 A 校正 B 的文字，再辨識部分文字移除與順序調整。');
+    if (!state.newRaw) return alert('請匯入重剪後的字幕 B。V1.9 會先用 A 校正 B 的文字，並用 B 全文檢查避免把分段差異誤判成移除。');
 
     const oldCues = parseSubtitle(state.oldRaw);
     const newCues = parseSubtitle(state.newRaw);
     if (!oldCues.length) return alert('字幕 A 沒有讀到時間碼。請確認格式是否包含起訖時間。');
     if (!newCues.length) return alert('字幕 B 沒有讀到時間碼。請確認格式是否包含起訖時間。');
 
-    // V1.8: 先建立 B 的順序區塊，再在「進入人工分段前」用 A 校正文案；若 B 只保留部分內容，會用 A 校正後的保留文字顯示。
+    // V1.9: 先建立 B 的順序區塊，再在「進入人工分段前」用 A 校正文案；若 B 只保留部分內容，會用 A 校正後的保留文字顯示。
     // compareText 永遠保留 B 的原始轉錄，之後仍可拿來做差異判斷。
     const rawReviewBlocks = mergeCues(newCues, state.mergeMode).map((b,i)=>({
       ...b, reviewIndex:i, forceBreak:false, compareText:b.text, textSource:'B', timeSource:'B', correctedFromA:false
@@ -236,6 +237,7 @@
         <textarea class="segment-text" aria-label="第 ${idx+1} 段台詞">${escapeHtml(b.text)}</textarea>
         ${b.aPreview && !b.correctedFromA ? `<div class="segment-a-note"><strong>A 可能對應：</strong>${escapeHtml(b.aPreview)} <span>${Math.round((b.aMatchScore||0)*100)}%</span></div>` : ''}
         ${(b.removedParts&&b.removedParts.length) ? `<div class="segment-a-note partial"><strong>已偵測移除部分文字：</strong>${escapeHtml(b.removedParts.map(x=>`「${x}」`).join('、'))}</div>` : ''}
+        ${(b.boundaryParts&&b.boundaryParts.length) ? `<div class="segment-a-note boundary"><strong>分段差異：</strong>${escapeHtml(b.boundaryParts.map(x=>`「${x}」`).join('、'))} 在 B 其他段落仍存在，未標成移除。</div>` : ''}
         <div class="segment-tools">
           <div class="segment-tool-left"><button class="mini-tool seg-merge-prev">↑ 合併上一段</button><button class="mini-tool seg-merge-next">↓ 合併下一段</button></div>
           <label class="break-toggle"><input type="checkbox" class="seg-force-break" ${b.forceBreak?'checked':''}> 這句另起一頁</label>
@@ -398,8 +400,8 @@
     const mid=formatLikeTime(b.startRaw,splitSec);
     const originalEndRaw=b.endRaw, originalEnd=b.end;
     const rawParts=splitApproxText(b.compareText || b.text, ratio);
-    b.text=left; b.compareText=rawParts[0]; b.endRaw=mid; b.end=splitSec; b.aPreview=''; b.removedParts=[]; b.removedRanges=[]; b.partialRemoved=false; b.manuallyEdited=true;
-    const next={...clone(b), id:uid(), text:right, compareText:rawParts[1], startRaw:mid, start:splitSec, endRaw:originalEndRaw, end:originalEnd, forceBreak:false, aPreview:'', removedParts:[], removedRanges:[], partialRemoved:false, manuallyEdited:true};
+    b.text=left; b.compareText=rawParts[0]; b.endRaw=mid; b.end=splitSec; b.aPreview=''; b.removedParts=[]; b.removedRanges=[]; b.boundaryParts=[]; b.boundaryRanges=[]; b.partialRemoved=false; b.manuallyEdited=true;
+    const next={...clone(b), id:uid(), text:right, compareText:rawParts[1], startRaw:mid, start:splitSec, endRaw:originalEndRaw, end:originalEnd, forceBreak:false, aPreview:'', removedParts:[], removedRanges:[], boundaryParts:[], boundaryRanges:[], partialRemoved:false, manuallyEdited:true};
     state.canonicalBlocks.splice(index+1,0,next);
     state.canonicalBlocks.forEach((x,i)=>x.reviewIndex=i);
     saveProject();
@@ -480,24 +482,25 @@
 
   function seedReviewTextFromA(reviewBlocks, oldCues, options={}) {
     const aggressive = options.aggressive !== false;
+    const bContext = buildBTextContext(reviewBlocks);
     const {matches} = matchBBlocksToA(reviewBlocks, oldCues, aggressive ? .44 : .50);
     const byB = new Map(matches.map(m => [m.bi, m]));
     return reviewBlocks.map((b, bi) => {
-      const m = byB.get(bi);
-      const out = {...b, compareText:b.compareText || b.text, aPreview:'', aMatchScore:m?.score || 0, correctedFromA:false, partialRemoved:false, removedParts:[], removedRanges:[], aText:''};
+      const m = byB.get(bi) || findContainingAMatch(b.compareText || b.text, oldCues);
+      const out = {...b, compareText:b.compareText || b.text, aPreview:'', aMatchScore:m?.score || 0, correctedFromA:false, partialRemoved:false, removedParts:[], removedRanges:[], boundaryParts:[], boundaryRanges:[], aText:''};
       if (!m) return out;
 
-      const analysis = analyzeAtoBText(m.aText, out.compareText || b.text);
+      const analysis = analyzeAtoBText(m.aText, out.compareText || b.text, contextForBBlock(bContext, bi));
       const bNorm = norm(out.compareText || b.text);
       const aNorm = norm(m.aText);
       const oneContainsOther = !!aNorm && !!bNorm && (aNorm.includes(bNorm) || bNorm.includes(aNorm));
-      const strongContainment = oneContainsOther && m.coverage >= .25 && m.score >= .50;
-      const confident = m.score >= (aggressive ? .54 : .72) && m.coverage >= .25;
+      const strongContainment = oneContainsOther && m.coverage >= .18 && m.score >= .48;
+      const confident = m.score >= (aggressive ? .54 : .72) && m.coverage >= .18;
 
-      // 分段頁要先看到「用 A 校正過的 B 最終文字」。
-      // 若 B 只是轉錄錯字，顯示 A；若 B 少了某段文字，顯示 A 扣掉被剪掉的部分。
-      if (analysis.safeToApply || confident || strongContainment) {
-        out.text = analysis.displayText || m.aText;
+      // 分段頁先顯示「A 校正過、但仍符合 B 當前分段的文字」。
+      // 若某段 A 文字其實在 B 其他段落仍存在，只視為分段差異，不標成移除。
+      if (analysis.safeToApply || confident || strongContainment || m.splitBoundary) {
+        out.text = analysis.displayText || m.displayText || m.aText;
         out.aText = m.aText;
         out.correctedFromA = true;
         out.textSource = 'A';
@@ -506,6 +509,8 @@
         out.partialRemoved = !!analysis.isPartial;
         out.removedParts = analysis.removedParts || [];
         out.removedRanges = analysis.removedRanges || [];
+        out.boundaryParts = analysis.boundaryParts || [];
+        out.boundaryRanges = analysis.boundaryRanges || [];
         out.partialConfidence = analysis.confidence || 0;
       } else if (m.score >= .50) {
         out.aPreview = m.aText;
@@ -517,14 +522,22 @@
   }
 
 
-  function analyzeAtoBText(aText, bText) {
+  function analyzeAtoBText(aText, bText, context={}) {
     const a = String(aText || '').trim();
     const b = String(bText || '').trim();
     const aArr = normalizedCharMap(a);
     const bArr = normalizedCharMap(b);
     const aNorm = aArr.map(x => x.ch).join('');
     const bNorm = bArr.map(x => x.ch).join('');
-    const base = { displayText: a, removedParts: [], removedRanges: [], isPartial: false, safeToApply: false, confidence: 0 };
+    const base = {
+      displayText: a,
+      removedParts: [], removedRanges: [],
+      boundaryParts: [], boundaryRanges: [],
+      isPartial: false,
+      hasBoundaryDiff: false,
+      safeToApply: false,
+      confidence: 0
+    };
     if (!aNorm || !bNorm) return base;
 
     const similarity = textSimilarity(a, b);
@@ -541,25 +554,103 @@
     const aKeepRatio = matchedA.size / Math.max(1, aArr.length);
     const deletionRatio = lenDelta / Math.max(1, aArr.length);
 
-    const ranges = unmatchedARanges(aArr, matchedA)
+    const rawRanges = unmatchedARanges(aArr, matchedA)
       .map(r => trimDeletionRange(a, r))
       .filter(r => r && norm(a.slice(r.start, r.end)).length >= 2);
 
     const confidence = Math.max(similarity, (bKeepRatio * .72 + aKeepRatio * .28));
-    const safePartial = ranges.length > 0 && bKeepRatio >= .68 && deletionRatio <= .58 && confidence >= .58;
-    if (safePartial) {
-      base.isPartial = true;
+    const safeShape = rawRanges.length > 0 && bKeepRatio >= .68 && deletionRatio <= .58 && confidence >= .58;
+    if (safeShape) {
+      const removedRanges = [];
+      const boundaryRanges = [];
+      rawRanges.forEach(r => {
+        const part = a.slice(r.start, r.end).trim();
+        if (partExistsElsewhereInB(part, context)) boundaryRanges.push(r);
+        else removedRanges.push(r);
+      });
+
+      const allAbsentFromCurrentRanges = mergeDisplayRanges([...removedRanges, ...boundaryRanges]);
+      base.displayText = allAbsentFromCurrentRanges.length ? removeRangesFromText(a, allAbsentFromCurrentRanges) : a;
       base.safeToApply = true;
       base.confidence = confidence;
-      base.removedRanges = mergeDisplayRanges(ranges);
-      base.removedParts = base.removedRanges.map(r => a.slice(r.start, r.end).trim()).filter(Boolean);
-      base.displayText = removeRangesFromText(a, base.removedRanges);
+      base.boundaryRanges = mergeDisplayRanges(boundaryRanges);
+      base.boundaryParts = base.boundaryRanges.map(r => a.slice(r.start, r.end).trim()).filter(Boolean);
+      base.hasBoundaryDiff = base.boundaryRanges.length > 0;
+
+      // 只有在「缺少的文字完全不在 B 全文中」時，才自動標記部分移除。
+      // 若缺少文字在 B 其他段落仍找得到，視為字幕分段差異，不產生移除需求。
+      if (removedRanges.length && !boundaryRanges.length) {
+        base.isPartial = true;
+        base.removedRanges = mergeDisplayRanges(removedRanges);
+        base.removedParts = base.removedRanges.map(r => a.slice(r.start, r.end).trim()).filter(Boolean);
+      }
       return base;
     }
 
     base.safeToApply = similarity >= .58 || (aNorm.includes(bNorm) && bNorm.length / Math.max(1, aNorm.length) >= .45);
     return base;
   }
+
+
+  function buildBTextContext(blocks) {
+    const rawTexts = (blocks || []).map(b => String(b.compareText || b.text || ''));
+    return { rawTexts, fullBText: rawTexts.join('') };
+  }
+
+  function contextForBBlock(ctx, index, radius=3) {
+    const rawTexts = ctx?.rawTexts || [];
+    const start = Math.max(0, index - radius);
+    const end = Math.min(rawTexts.length, index + radius + 1);
+    return {
+      fullBText: ctx?.fullBText || rawTexts.join(''),
+      nearBText: rawTexts.slice(start, end).join(''),
+      currentBText: rawTexts[index] || ''
+    };
+  }
+
+  function partExistsElsewhereInB(partText, context={}) {
+    const p = norm(partText);
+    if (!p || p.length < 2) return false;
+    const full = norm(context.fullBText || '');
+    if (!full) return false;
+    return full.includes(p);
+  }
+
+  function findContainingAMatch(bText, aCues) {
+    const bNorm = norm(bText);
+    if (!bNorm || bNorm.length < 4) return null;
+    let best = null;
+    const maxWindow = 12;
+    for (let aStart=0; aStart<aCues.length; aStart++) {
+      let aText = '';
+      for (let aEnd=aStart; aEnd<Math.min(aCues.length, aStart+maxWindow); aEnd++) {
+        aText = smartJoin(aText, aCues[aEnd].text);
+        const aNorm = norm(aText);
+        if (!aNorm || aNorm.length < bNorm.length) continue;
+        if (!aNorm.includes(bNorm)) continue;
+        const coverage = bNorm.length / Math.max(1, aNorm.length);
+        if (coverage < .12) continue;
+        const displayText = extractMatchingSlice(aText, bText) || String(bText || '').trim();
+        const score = Math.max(.62, Math.min(.86, .56 + coverage * .65));
+        const candidate = { bi:null, aStart, aEnd, score, coverage, aText, displayText, oldStartRaw:aCues[aStart].startRaw, oldEndRaw:aCues[aEnd].endRaw, splitBoundary:true };
+        if (!best || candidate.score > best.score || (candidate.score === best.score && coverage > best.coverage)) best = candidate;
+      }
+    }
+    return best;
+  }
+
+  function extractMatchingSlice(aText, bText) {
+    const bNorm = norm(bText);
+    if (!bNorm) return '';
+    const aArr = normalizedCharMap(aText);
+    const aNorm = aArr.map(x => x.ch).join('');
+    const idx = aNorm.indexOf(bNorm);
+    if (idx < 0 || idx + bNorm.length - 1 >= aArr.length) return '';
+    const start = aArr[idx].start;
+    const end = aArr[idx + bNorm.length - 1].end;
+    return String(aText || '').slice(start, end).trim();
+  }
+
 
   function normalizedCharMap(raw) {
     const out = [];
@@ -718,6 +809,7 @@
   }
 
   function compareReviewedBToA(reviewBlocks, oldCues, autoReq=true) {
+    const bContext = buildBTextContext(reviewBlocks);
     const {matches,usedA} = matchBBlocksToA(reviewBlocks, oldCues, .52);
     const byB = new Map(matches.map(m=>[m.bi,m]));
     const matchedInBOrder = matches.slice().sort((a,b)=>a.bi-b.bi);
@@ -728,14 +820,30 @@
     reviewBlocks.forEach((bb, bi)=>{
       const m=byB.get(bi);
       if(!m){
-        output.push(makeEditorBlock({
-          ...bb, text:bb.text, compareText:bb.compareText||bb.text, newIndex:bi, oldIndex:null, status:'added', similarity:0,
-          textSource:'B', timeSource:'B', forceBreak:!!bb.forceBreak
-        }, autoReq));
+        const containing = findContainingAMatch(bb.compareText || bb.text, oldCues);
+        if (containing) {
+          output.push(makeEditorBlock({
+            ...bb,
+            text:bb.text || containing.displayText,
+            aText:containing.aText,
+            compareText:bb.compareText||bb.text,
+            newIndex:bi, oldIndex:containing.aStart, status:'split_difference', similarity:containing.score,
+            oldStartRaw:containing.oldStartRaw, oldEndRaw:containing.oldEndRaw,
+            textSource:'A', timeSource:'B', forceBreak:!!bb.forceBreak,
+            aCueStart:containing.aStart, aCueEnd:containing.aEnd,
+            boundaryParts:[bb.text || containing.displayText]
+          }, autoReq));
+        } else {
+          output.push(makeEditorBlock({
+            ...bb, text:bb.text, compareText:bb.compareText||bb.text, newIndex:bi, oldIndex:null, status:'added', similarity:0,
+            textSource:'B', timeSource:'B', forceBreak:!!bb.forceBreak
+          }, autoReq));
+        }
         return;
       }
-      const analysis = analyzeAtoBText(m.aText, bb.compareText || bb.text);
-      let status = m.score < .68 && !analysis.isPartial ? 'uncertain' : (m.moved ? 'moved' : 'unchanged');
+      const analysis = analyzeAtoBText(m.aText, bb.compareText || bb.text, contextForBBlock(bContext, bi));
+      let status = m.score < .68 && !analysis.isPartial && !analysis.hasBoundaryDiff ? 'uncertain' : (m.moved ? 'moved' : 'unchanged');
+      if (analysis.hasBoundaryDiff && !analysis.isPartial && !m.moved) status = 'split_difference';
       if (analysis.isPartial) status = m.moved ? 'moved_partial_removed' : 'partial_removed';
       output.push(makeEditorBlock({
         ...bb,
@@ -744,6 +852,8 @@
         compareText:bb.compareText||bb.text,
         removedParts:analysis.removedParts || [],
         removedRanges:analysis.removedRanges || [],
+        boundaryParts:analysis.boundaryParts || [],
+        boundaryRanges:analysis.boundaryRanges || [],
         partialConfidence:analysis.confidence || 0,
         startRaw:bb.startRaw,endRaw:bb.endRaw,
         oldStartRaw:m.oldStartRaw,oldEndRaw:m.oldEndRaw,
@@ -865,7 +975,7 @@
       oldIndex:data.oldIndex ?? null, newIndex:data.newIndex ?? null,
       startRaw:data.startRaw||'', endRaw:data.endRaw||'', oldStartRaw:data.oldStartRaw||'', oldEndRaw:data.oldEndRaw||'',
       type:data.type||'script', text:data.text||'', aText:data.aText||'', oldText:data.oldText||'', compareText:data.compareText||'', textSource:data.textSource||'A', timeSource:data.timeSource||'A',
-      removedParts:[...(data.removedParts||[])], removedRanges:[...(data.removedRanges||[])], partialConfidence:data.partialConfidence||0,
+      removedParts:[...(data.removedParts||[])], removedRanges:[...(data.removedRanges||[])], boundaryParts:[...(data.boundaryParts||[])], boundaryRanges:[...(data.boundaryRanges||[])], partialConfidence:data.partialConfidence||0,
       requirements:[], links:[], images:[], forceBreak:!!data.forceBreak, anchorTime:Number.isFinite(data.anchorTime)?data.anchorTime:null
     };
     if (autoReq) b.requirements.push(...autoRequirementsFor(b));
@@ -963,7 +1073,7 @@
   function renderSummary() {
     const counts = Object.fromEntries(Object.keys(STATUS_META).map(k=>[k,0]));
     state.blocks.forEach(b=>{ if(b.type!=='manual') counts[b.status]=(counts[b.status]||0)+1; });
-    const ordered = ['removed','partial_removed','moved','moved_partial_removed','added','uncertain','unchanged'];
+    const ordered = ['removed','partial_removed','moved','moved_partial_removed','added','uncertain','split_difference','unchanged'];
     els.summaryChips.innerHTML = ordered.map(k => `<div class="summary-chip"><strong>${counts[k]||0}</strong><span>${STATUS_META[k].label}</span></div>`).join('');
     els.filterRow.innerHTML = `<button class="filter-chip ${activeFilter==='all'?'active':''}" data-filter="all">全部</button>` + ordered.map(k=>`<button class="filter-chip ${activeFilter===k?'active':''}" data-filter="${k}">${STATUS_META[k].label}</button>`).join('');
     $$('.filter-chip', els.filterRow).forEach(btn=>btn.addEventListener('click',()=>{activeFilter=btn.dataset.filter;renderSummary();renderBlocks();}));
